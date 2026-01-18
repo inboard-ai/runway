@@ -63,17 +63,16 @@ async fn handle_request(
 ///
 /// # Arguments
 /// * `config` - Server configuration
-/// * `db` - Optional database connection
+/// * `db` - Optional database connection (wrapped in Arc for sharing)
 /// * `router` - Router handle with registered routes
 pub async fn run(
     config: Config,
-    db: Option<libsql::Database>,
+    db: Option<Arc<libsql::Database>>,
     router: Arc<RouterHandle>,
 ) -> crate::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
     let listener = TcpListener::bind(addr).await?;
 
-    let db = db.map(Arc::new);
     let state = Arc::new(State { config, db, router });
 
     info!("Server listening on http://{}", addr);
