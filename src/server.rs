@@ -19,7 +19,7 @@ use crate::router::{Context, RouteMatch, RouterHandle};
 /// Shared server state.
 pub struct State {
     pub config: Config,
-    pub db: Arc<libsql::Database>,
+    pub db: Option<Arc<libsql::Database>>,
     pub router: Arc<RouterHandle>,
 }
 
@@ -37,7 +37,7 @@ async fn handle_request(
             let ctx = Context {
                 request: req,
                 params,
-                db: Arc::clone(&state.db),
+                db: state.db.clone(),
                 config: state.config.clone(),
             };
 
@@ -63,17 +63,17 @@ async fn handle_request(
 ///
 /// # Arguments
 /// * `config` - Server configuration
-/// * `db` - Database connection
+/// * `db` - Optional database connection
 /// * `router` - Router handle with registered routes
 pub async fn run(
     config: Config,
-    db: libsql::Database,
+    db: Option<libsql::Database>,
     router: Arc<RouterHandle>,
 ) -> crate::Result<()> {
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
     let listener = TcpListener::bind(addr).await?;
 
-    let db = Arc::new(db);
+    let db = db.map(Arc::new);
     let state = Arc::new(State { config, db, router });
 
     info!("Server listening on http://{}", addr);

@@ -22,8 +22,8 @@ pub struct Context {
     pub request: Request<Incoming>,
     /// Route parameters (e.g., {id} from path).
     pub params: HashMap<String, String>,
-    /// Database handle (wrapped in Arc for sharing).
-    pub db: Arc<libsql::Database>,
+    /// Database handle (wrapped in Arc for sharing). Optional for modules that don't need a database.
+    pub db: Option<Arc<libsql::Database>>,
     /// Server configuration.
     pub config: Config,
 }
@@ -49,6 +49,18 @@ impl Context {
     /// Require authenticated user, returning Unauthorized if not present.
     pub fn require_user_id(&self) -> Result<String> {
         crate::auth::extract_user_id(&self.request, &self.config.auth)
+    }
+
+    /// Get the database handle if available.
+    pub fn db(&self) -> Option<&Arc<libsql::Database>> {
+        self.db.as_ref()
+    }
+
+    /// Require database, returning Internal error if not configured.
+    pub fn require_db(&self) -> Result<&Arc<libsql::Database>> {
+        self.db
+            .as_ref()
+            .ok_or_else(|| crate::Error::Internal("Database not configured".to_string()))
     }
 }
 
