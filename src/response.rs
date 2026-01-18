@@ -80,3 +80,23 @@ pub fn internal_error(message: &str) -> HttpResponse {
         .body(Full::new(Bytes::from(body.to_string())))
         .unwrap()
 }
+
+/// Build a binary response with optional download filename.
+pub fn binary(data: Bytes, content_type: &str, filename: Option<&str>) -> HttpResponse {
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", content_type);
+    if let Some(name) = filename {
+        builder = builder.header("Content-Disposition", format!("attachment; filename=\"{}\"", name));
+    }
+    builder.body(Full::new(data)).unwrap()
+}
+
+/// Build a 307 Temporary Redirect response.
+pub fn redirect(location: &str) -> HttpResponse {
+    Response::builder()
+        .status(StatusCode::TEMPORARY_REDIRECT)
+        .header("Location", location)
+        .body(Full::new(Bytes::new()))
+        .unwrap()
+}
