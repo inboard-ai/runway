@@ -17,8 +17,8 @@ pub enum Error {
     #[error("Token expired")]
     TokenExpired,
 
-    #[error("Forbidden")]
-    Forbidden,
+    #[error("Forbidden: cannot {action} {resource}")]
+    Forbidden { resource: String, action: String },
 
     // Data errors
     #[error("Not found: {0}")]
@@ -62,7 +62,7 @@ impl Error {
             Error::Unauthorized | Error::InvalidCredentials | Error::TokenExpired => {
                 StatusCode::UNAUTHORIZED
             }
-            Error::Forbidden => StatusCode::FORBIDDEN,
+            Error::Forbidden { .. } => StatusCode::FORBIDDEN,
 
             // Data errors -> 4xx
             Error::NotFound(_) => StatusCode::NOT_FOUND,
