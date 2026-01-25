@@ -7,11 +7,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use hyper::body::Incoming;
-use hyper::{Method, Request};
+use crate::Result;
 use crate::config::Config;
 use crate::response::HttpResponse;
-use crate::Result;
+use hyper::body::Incoming;
+use hyper::{Method, Request};
 
 /// Boxed future for async handlers.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -37,7 +37,7 @@ impl Context {
     /// Get a required route parameter, returning BadRequest if missing.
     pub fn require_param(&self, name: &str) -> Result<&str> {
         self.param(name)
-            .ok_or_else(|| crate::Error::BadRequest(format!("Missing parameter: {}", name)))
+            .ok_or_else(|| crate::Error::BadRequest(format!("Missing parameter: {name}")))
     }
 
     /// Extract user ID from Authorization header.

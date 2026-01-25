@@ -3,9 +3,9 @@
 //! This module provides JWT token creation and verification.
 //! Password hashing is NOT included - that's the responsibility of your IAM module.
 
-use hyper::body::Incoming;
 use hyper::Request;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use hyper::body::Incoming;
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Auth as AuthConfig;
@@ -43,7 +43,7 @@ pub fn create_token(config: &AuthConfig, user_id: &str) -> Result<String> {
         &claims,
         &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
     )
-    .map_err(|e| Error::Internal(format!("Token creation failed: {}", e)))?;
+    .map_err(|e| Error::Internal(format!("Token creation failed: {e}")))?;
 
     Ok(token)
 }

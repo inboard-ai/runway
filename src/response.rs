@@ -87,7 +87,10 @@ pub fn binary(data: Bytes, content_type: &str, filename: Option<&str>) -> HttpRe
         .status(StatusCode::OK)
         .header("Content-Type", content_type);
     if let Some(name) = filename {
-        builder = builder.header("Content-Disposition", format!("attachment; filename=\"{}\"", name));
+        builder = builder.header(
+            "Content-Disposition",
+            format!("attachment; filename=\"{name}\""),
+        );
     }
     builder.body(Full::new(data)).unwrap()
 }

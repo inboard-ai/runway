@@ -16,11 +16,10 @@ use libsql::{Builder, Connection, Database};
 pub async fn connect(url: &str) -> crate::Result<Database> {
     let db = if url.starts_with("libsql://") || url.starts_with("https://") {
         // Remote Turso database
-        let token = std::env::var("TURSO_AUTH_TOKEN")
-            .map_err(|_| crate::Error::Internal("TURSO_AUTH_TOKEN not set for remote database".into()))?;
-        Builder::new_remote(url.to_string(), token)
-            .build()
-            .await?
+        let token = std::env::var("TURSO_AUTH_TOKEN").map_err(|_| {
+            crate::Error::Internal("TURSO_AUTH_TOKEN not set for remote database".into())
+        })?;
+        Builder::new_remote(url.to_string(), token).build().await?
     } else if url == ":memory:" {
         // In-memory database
         Builder::new_local(":memory:").build().await?
@@ -42,4 +41,4 @@ pub fn connection(db: &Database) -> crate::Result<Connection> {
 }
 
 // Re-export commonly used libsql types for convenience
-pub use libsql::{params, Connection as DbConnection, Database as Db, Row};
+pub use libsql::{Connection as DbConnection, Database as Db, Row, params};

@@ -142,11 +142,10 @@ impl ConfigLoader {
     ) -> crate::Result<Config> {
         // Start with file config or defaults
         let mut config: Config = if let Some(path) = config_path {
-            let content = std::fs::read_to_string(path).map_err(|e| {
-                Error::Config(format!("Failed to read config file: {}", e))
-            })?;
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| Error::Config(format!("Failed to read config file: {e}")))?;
             toml::from_str(&content)
-                .map_err(|e| Error::Config(format!("Failed to parse config: {}", e)))?
+                .map_err(|e| Error::Config(format!("Failed to parse config: {e}")))?
         } else {
             Config {
                 server: Server::default(),
@@ -161,10 +160,10 @@ impl ConfigLoader {
         // Override with environment variables
         let prefix = &self.env_prefix;
 
-        if let Ok(host) = std::env::var(format!("{}_HOST", prefix)) {
+        if let Ok(host) = std::env::var(format!("{prefix}_HOST")) {
             config.server.host = host;
         }
-        if let Ok(port) = std::env::var(format!("{}_PORT", prefix)) {
+        if let Ok(port) = std::env::var(format!("{prefix}_PORT")) {
             if let Ok(p) = port.parse() {
                 config.server.port = p;
             }
@@ -250,13 +249,7 @@ token_expiry_days = 7
 
         let loader = ConfigLoader::new("TEST");
         let config = loader
-            .load(
-                Some(file.path()),
-                None,
-                None,
-                None,
-                Some("cli_secret"),
-            )
+            .load(Some(file.path()), None, None, None, Some("cli_secret"))
             .unwrap();
 
         // Restore DATABASE_URL
