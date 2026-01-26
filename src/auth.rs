@@ -4,6 +4,16 @@
 //! Password hashing is NOT included - that's the responsibility of your IAM module.
 
 use hyper::Request;
+use uuid::Uuid;
+
+/// Trait for user types that can be authenticated.
+///
+/// Implement this trait for your user type to use with IAM.
+pub trait User {
+    fn id(&self) -> Uuid;
+    fn email(&self) -> &str;
+    fn password_hash(&self) -> &str;
+}
 use hyper::body::Incoming;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
