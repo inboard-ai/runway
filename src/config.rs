@@ -163,10 +163,10 @@ impl ConfigLoader {
         if let Ok(host) = std::env::var(format!("{prefix}_HOST")) {
             config.server.host = host;
         }
-        if let Ok(port) = std::env::var(format!("{prefix}_PORT")) {
-            if let Ok(p) = port.parse() {
-                config.server.port = p;
-            }
+        if let Ok(port) = std::env::var(format!("{prefix}_PORT"))
+            && let Ok(p) = port.parse()
+        {
+            config.server.port = p;
         }
         if let Ok(url) = std::env::var("DATABASE_URL") {
             config.database.url = url;

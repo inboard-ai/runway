@@ -59,7 +59,7 @@ pub mod server;
 pub use config::{Config, ConfigLoader};
 pub use error::{Error, Result};
 pub use module::Module;
-pub use permission::{level, Level};
+pub use permission::{Level, level};
 pub use router::{Context, Router};
 
 // Re-export commonly used dependencies for convenience
