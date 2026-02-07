@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -28,15 +28,26 @@ async fn handle_request(
     req: Request<Incoming>,
     state: Arc<State>,
 ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
-    let method = req.method().clone();
-    let path = req.uri().path().to_string();
+    // Read body upfront
+    let (parts, body) = req.into_parts();
+    let body_bytes = BodyExt::collect(body)
+        .await
+        .map_err(|_| ())
+        .unwrap_or_default()
+        .to_bytes();
+
+    let method = &parts.method;
+    let path = parts.uri.path().to_string();
 
     // Match route
-    match state.router.match_route(&method, &path) {
+    match state.router.match_route(method, &path) {
         RouteMatch::Matched { handler, params } => {
             let ctx = Context {
-                request: req,
+                method: parts.method,
+                uri: parts.uri,
+                headers: parts.headers,
                 params,
+                body: body_bytes,
                 db: state.db.clone(),
                 config: state.config.clone(),
             };

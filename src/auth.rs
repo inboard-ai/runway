@@ -3,7 +3,7 @@
 //! This module provides JWT token creation and verification.
 //! Password hashing is NOT included - that's the responsibility of your IAM module.
 
-use hyper::Request;
+use hyper::http::HeaderMap;
 use uuid::Uuid;
 
 /// Trait for user types that can be authenticated.
@@ -14,7 +14,6 @@ pub trait User {
     fn email(&self) -> &str;
     fn password_hash(&self) -> &str;
 }
-use hyper::body::Incoming;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
@@ -85,9 +84,8 @@ pub fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims> {
 /// # Returns
 /// - `Ok(user_id)` if the token is valid
 /// - `Err(Error::Unauthorized)` if the header is missing or token is invalid
-pub fn extract_user_id(req: &Request<Incoming>, config: &AuthConfig) -> Result<String> {
-    let auth_header = req
-        .headers()
+pub fn extract_user_id(headers: &HeaderMap, config: &AuthConfig) -> Result<String> {
+    let auth_header = headers
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
         .ok_or(Error::Unauthorized)?;

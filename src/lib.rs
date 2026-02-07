@@ -50,7 +50,10 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod module;
+pub mod openapi;
+pub mod operation;
 pub mod permission;
+pub mod procedure;
 pub mod response;
 pub mod router;
 pub mod server;
@@ -59,7 +62,9 @@ pub mod server;
 pub use config::{Config, ConfigLoader};
 pub use error::{Error, Result};
 pub use module::Module;
+pub use openapi::Info;
 pub use permission::{Level, level};
+pub use procedure::{Empty, Meta, Procedure};
 pub use router::{Context, Router};
 
 // Re-export commonly used dependencies for convenience
