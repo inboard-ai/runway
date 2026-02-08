@@ -10,7 +10,31 @@ use std::sync::Arc;
 use libsql::{Builder, Connection, Database};
 
 /// Shared database handle, cheap to clone.
-pub type Handle = Arc<Database>;
+///
+/// Wraps `Arc<Database>` so callers never deal with `Arc` directly.
+/// Implements `Deref<Target = Database>` for transparent field access.
+#[derive(Clone)]
+pub struct Handle(Arc<Database>);
+
+impl Handle {
+    /// Get a connection from the database.
+    pub fn connect(&self) -> crate::Result<Connection> {
+        Ok(self.0.connect()?)
+    }
+}
+
+impl std::ops::Deref for Handle {
+    type Target = Database;
+    fn deref(&self) -> &Database {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Handle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Handle").field(&"Database(...)").finish()
+    }
+}
 
 /// Connect to the database.
 ///
@@ -18,7 +42,7 @@ pub type Handle = Arc<Database>;
 /// - Local file: `mydata.db`, `file:path/to/db.sqlite`, `sqlite://path`
 /// - In-memory: `:memory:`
 /// - Remote Turso: `libsql://your-db.turso.io` (requires `TURSO_AUTH_TOKEN` env var)
-pub async fn connect(url: &str) -> crate::Result<Database> {
+pub async fn connect(url: &str) -> crate::Result<Handle> {
     let db = if url.starts_with("libsql://") || url.starts_with("https://") {
         // Remote Turso database
         let token = std::env::var("TURSO_AUTH_TOKEN").map_err(|_| {
@@ -37,12 +61,7 @@ pub async fn connect(url: &str) -> crate::Result<Database> {
         Builder::new_local(path).build().await?
     };
 
-    Ok(db)
-}
-
-/// Get a connection from the database.
-pub fn connection(db: &Database) -> crate::Result<Connection> {
-    Ok(db.connect()?)
+    Ok(Handle(Arc::new(db)))
 }
 
 // Re-export commonly used libsql types for convenience
