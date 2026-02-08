@@ -1,8 +1,7 @@
 //! Server infrastructure security integration tests.
 //!
 //! These tests start a real server, send raw TCP traffic, and assert on
-//! observable behavior. They are expected to **fail** until the corresponding
-//! security mitigations are implemented.
+//! observable behavior.
 
 use std::net::SocketAddr;
 
@@ -48,7 +47,7 @@ async fn start_test_server() -> server::Server {
         .expect("failed to start test server")
 }
 
-/// Send a raw request and read the full response (half-close after write).
+/// Send a raw HTTP/1.1 request with `Connection: close` and read the full response.
 async fn raw_request(addr: SocketAddr, payload: &[u8]) -> Vec<u8> {
     let mut stream = TcpStream::connect(addr)
         .await
@@ -57,16 +56,13 @@ async fn raw_request(addr: SocketAddr, payload: &[u8]) -> Vec<u8> {
         .write_all(payload)
         .await
         .expect("failed to write");
-    stream
-        .shutdown()
-        .await
-        .expect("failed to half-close");
 
     let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .await
-        .expect("failed to read response");
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_to_end(&mut buf),
+    )
+    .await;
     buf
 }
 
@@ -87,24 +83,19 @@ async fn raw_partial_request(addr: SocketAddr, payload: &[u8]) -> TcpStream {
 // ---------------------------------------------------------------------------
 
 /// The server should reject request bodies larger than a configured maximum.
-/// Currently the body is collected with no size limit, so this test is expected
-/// to fail until `http_body_util::Limited` (or equivalent) is wired in.
+/// Sends headers declaring a 10 MB Content-Length; the server should reject
+/// based on the header alone and return 413 Payload Too Large.
 #[tokio::test]
 async fn server_rejects_oversized_body() {
     let server = start_test_server().await;
     let addr = server.addr();
 
-    // 10 MB body
-    let body = vec![b'A'; 10 * 1024 * 1024];
-    let header = format!(
-        "POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n",
-        body.len()
-    );
-
-    let mut payload = header.into_bytes();
-    payload.extend_from_slice(&body);
-
-    let response = raw_request(addr, &payload).await;
+    // Send only headers with an oversized Content-Length (no body data)
+    let response = raw_request(
+        addr,
+        b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10485760\r\nConnection: close\r\n\r\n",
+    )
+    .await;
     let response_str = String::from_utf8_lossy(&response);
 
     server.shutdown().await.unwrap();
@@ -132,18 +123,28 @@ async fn server_rejects_excess_connections() {
         }
     }
 
+    // Give the server a moment to accept and categorise all connections
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
     // Try to get a response on each open connection
     let mut service_unavailable = 0usize;
     for mut stream in streams {
-        let req = b"GET /ping HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let req = b"GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
         if stream.write_all(req).await.is_ok() {
-            let _ = stream.shutdown().await;
             let mut buf = vec![0u8; 4096];
-            if let Ok(n) = stream.read(&mut buf).await {
-                let resp = String::from_utf8_lossy(&buf[..n]);
-                if resp.contains("503") {
-                    service_unavailable += 1;
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                stream.read(&mut buf),
+            )
+            .await
+            {
+                Ok(Ok(n)) if n > 0 => {
+                    let resp = String::from_utf8_lossy(&buf[..n]);
+                    if resp.contains("503") {
+                        service_unavailable += 1;
+                    }
                 }
+                _ => {}
             }
         }
     }
@@ -205,15 +206,16 @@ async fn server_returns_cors_headers() {
 
     let response = raw_request(
         addr,
-        b"GET /ping HTTP/1.1\r\nHost: localhost\r\nOrigin: http://evil.com\r\n\r\n",
+        b"GET /ping HTTP/1.1\r\nHost: localhost\r\nOrigin: http://evil.com\r\nConnection: close\r\n\r\n",
     )
     .await;
     let response_str = String::from_utf8_lossy(&response);
 
     server.shutdown().await.unwrap();
 
+    let response_lower = response_str.to_ascii_lowercase();
     assert!(
-        response_str.contains("Access-Control-Allow-Origin"),
+        response_lower.contains("access-control-allow-origin"),
         "Expected Access-Control-Allow-Origin header in response:\n{response_str}"
     );
 }
@@ -226,19 +228,20 @@ async fn server_returns_security_headers() {
 
     let response = raw_request(
         addr,
-        b"GET /ping HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        b"GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
     )
     .await;
     let response_str = String::from_utf8_lossy(&response);
 
     server.shutdown().await.unwrap();
 
+    let response_lower = response_str.to_ascii_lowercase();
     assert!(
-        response_str.contains("X-Content-Type-Options"),
+        response_lower.contains("x-content-type-options"),
         "Expected X-Content-Type-Options header in response:\n{response_str}"
     );
     assert!(
-        response_str.contains("X-Frame-Options"),
+        response_lower.contains("x-frame-options"),
         "Expected X-Frame-Options header in response:\n{response_str}"
     );
 }
