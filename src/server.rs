@@ -82,7 +82,24 @@ async fn handle_request(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // Read body with size limit
+    // Reject oversized bodies early via Content-Length header
+    if let Some(cl) = parts.headers.get(hyper::header::CONTENT_LENGTH) {
+        if let Ok(len) = cl.to_str().unwrap_or("0").parse::<usize>() {
+            if len > MAX_BODY_SIZE {
+                let mut response = Response::builder()
+                    .status(StatusCode::PAYLOAD_TOO_LARGE)
+                    .header("Content-Type", "application/json")
+                    .body(Full::new(Bytes::from(
+                        r#"{"error":"Payload too large"}"#,
+                    )))
+                    .unwrap();
+                add_standard_headers(&mut response, origin.as_deref());
+                return Ok(response);
+            }
+        }
+    }
+
+    // Read body with size limit (fallback for chunked encoding)
     let body_bytes = match BodyExt::collect(Limited::new(body, MAX_BODY_SIZE)).await {
         Ok(collected) => collected.to_bytes(),
         Err(_) => {
