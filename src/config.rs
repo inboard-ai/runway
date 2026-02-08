@@ -263,7 +263,7 @@ impl Loader {
         cli_port: Option<u16>,
         cli_database_url: Option<&str>,
         cli_jwt_secret: Option<&str>,
-    ) -> crate::Result<Internal> {
+    ) -> crate::Result<Config> {
         // Start with file config or defaults
         let mut config: Internal = if let Some(path) = config_path {
             let content = std::fs::read_to_string(path)
@@ -341,7 +341,7 @@ impl Loader {
             }
         }
 
-        Ok(config)
+        Ok(Config(Arc::new(config)))
     }
 }
 
