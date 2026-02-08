@@ -154,21 +154,20 @@ async fn handle_request(
     }
 
     // Reject oversized bodies early via Content-Length header
-    if let Some(cl) = parts.headers.get(hyper::header::CONTENT_LENGTH) {
-        if let Ok(len) = cl.to_str().unwrap_or("0").parse::<usize>() {
-            if len > MAX_BODY_SIZE {
-                let mut response = Response::builder()
-                    .status(StatusCode::PAYLOAD_TOO_LARGE)
-                    .header("Content-Type", "application/json")
-                    .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
-                    .unwrap();
-                add_standard_headers(&mut response, origin.as_deref(), state.config.server());
-                response
-                    .headers_mut()
-                    .insert("X-Request-Id", request_id.to_string().parse().unwrap());
-                return Ok(response);
-            }
-        }
+    if let Some(cl) = parts.headers.get(hyper::header::CONTENT_LENGTH)
+        && let Ok(len) = cl.to_str().unwrap_or("0").parse::<usize>()
+        && len > MAX_BODY_SIZE
+    {
+        let mut response = Response::builder()
+            .status(StatusCode::PAYLOAD_TOO_LARGE)
+            .header("Content-Type", "application/json")
+            .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
+            .unwrap();
+        add_standard_headers(&mut response, origin.as_deref(), state.config.server());
+        response
+            .headers_mut()
+            .insert("X-Request-Id", request_id.to_string().parse().unwrap());
+        return Ok(response);
     }
 
     // Read body with size limit (fallback for chunked encoding)

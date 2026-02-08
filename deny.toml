@@ -1,8 +1,6 @@
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+unmaintained = "workspace"
 yanked = "warn"
-notice = "warn"
 
 [licenses]
 allow = [
@@ -13,8 +11,8 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
+    "CDLA-Permissive-2.0",
 ]
-copyleft = "deny"
 
 [bans]
 multiple-versions = "warn"
