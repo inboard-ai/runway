@@ -2,10 +2,6 @@
 
 # runway
 
-[![Crates.io](https://img.shields.io/crates/v/runway.svg)](https://crates.io/crates/runway)
-[![Documentation](https://docs.rs/runway/badge.svg)](https://docs.rs/runway)
-[![License](https://img.shields.io/crates/l/runway.svg)](https://github.com/inboard-ai/runway/blob/main/LICENSE)
-
 Modular HTTP server framework for Rust
 
 </div>
@@ -30,7 +26,8 @@ impl Module for MyModule {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = runway::ConfigLoader::new("MYAPP")
-        .load(None, None, None, None, Some("secret"))?;
+        // JWT secret must be >= 32 bytes for HS256
+        .load(None, None, None, None, Some("change-me-to-a-real-secret-at-least-32-bytes!"))?;
 
     let mut router = Router::new();
     MyModule.routes(&mut router);
@@ -53,7 +50,9 @@ Configuration is loaded in layers (each overrides the previous):
 ```bash
 export MYAPP_HOST=0.0.0.0
 export MYAPP_PORT=8080
-export MYAPP_JWT_SECRET=your-secret-key
+export MYAPP_JWT_SECRET=your-secret-key-at-least-32-bytes
+export MYAPP_JWT_ISSUER=my-service
+export MYAPP_JWT_AUDIENCE=my-app
 export DATABASE_URL=sqlite://data.db
 ```
 
@@ -62,12 +61,23 @@ export DATABASE_URL=sqlite://data.db
 [server]
 host = "0.0.0.0"
 port = 8080
+hsts = false
+cors_origins = ["https://myapp.com"]
+drain_timeout_secs = 30
+
+[server.rate_limit]
+max_requests = 100
+window_secs = 60
 
 [database]
 url = "data.db"
 
 [auth]
-token_expiry_days = 30
+token_expiry_days = 1
+token_expiry_hours = 1
+jwt_issuer = "my-service"
+jwt_audience = "my-app"
+jwt_algorithm = "HS256"
 ```
 
 ## Module Trait
@@ -75,10 +85,10 @@ token_expiry_days = 30
 Modules encapsulate related routes and functionality:
 
 ```rust
-use runway::{Module, Router};
+use runway::{DbHandle, Module, Router};
 
 pub struct UsersModule {
-    db: Arc<libsql::Database>,
+    db: DbHandle,
 }
 
 impl Module for UsersModule {
@@ -104,6 +114,10 @@ async fn get_user(ctx: Context) -> runway::Result<HttpResponse> {
     let id = ctx.require_param("id")?;      // Route parameter
     let db = ctx.require_db()?;             // Database (if configured)
 
+    let req_id = ctx.request_id;            // Unique request UUID
+    let addr = ctx.remote_addr;             // Direct socket address
+    let ip = ctx.client_ip();               // Client IP (respects X-Forwarded-For)
+
     // ... handle request
     response::ok(&user)
 }
@@ -124,29 +138,47 @@ response::binary(bytes, "application/pdf", Some("file.pdf"));  // Binary downloa
 response::redirect("/new-location");            // 307 Redirect
 ```
 
+## Security & Transport
+
+Runway is designed to sit behind a reverse proxy (e.g. nginx, Caddy) and does not terminate TLS itself.
+
+- **HSTS** — Opt in with `hsts = true` in `[server]`. Adds `Strict-Transport-Security` header to every response.
+- **CORS** — Controlled by `cors_origins` in `[server]`. An empty list (default) disables CORS headers entirely. `["*"]` allows any origin. Specific origins are matched exactly.
+- **Rate limiting** — Opt in by adding a `[server.rate_limit]` section. Per-client limits keyed by IP address.
+- **Request IDs** — Every response includes an `X-Request-Id` header. If the incoming request already carries one, it is propagated; otherwise a new UUID is generated. Available as `ctx.request_id` in handlers.
+- **Graceful shutdown** — On `SIGINT`/`SIGTERM` the server stops accepting new connections and drains in-flight requests for up to `drain_timeout_secs` (default 30).
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│                runway                   │
-│  ┌─────────┐ ┌─────────┐ ┌───────────┐  │
-│  │ config  │ │   db    │ │   auth    │  │
-│  │ (TOML+  │ │(libsql/ │ │ (JWT      │  │
-│  │ env+CLI)│ │ Turso)  │ │ validate) │  │
-│  └─────────┘ └─────────┘ └───────────┘  │
-│  ┌─────────┐ ┌─────────┐ ┌───────────┐  │
-│  │ router  │ │ server  │ │ response  │  │
-│  │(matchit)│ │ (hyper) │ │ (helpers) │  │
-│  └─────────┘ └─────────┘ └───────────┘  │
-└───────────────────┬─────────────────────┘
-                    │
-      ┌─────────────┼─────────────┐
-      ▼             ▼             ▼
-┌───────────┐ ┌───────────┐ ┌───────────┐
-│  module:  │ │  module:  │ │  module:  │
-│   users   │ │   auth    │ │   posts   │
-└───────────┘ └───────────┘ └───────────┘
+┌──────────────────────────────────────────────────┐
+│                     runway                       │
+│  ┌───────────┐ ┌──────────┐ ┌─────────────────┐  │
+│  │  config   │ │    db    │ │       auth      │  │
+│  │ (TOML+    │ │ (libsql/ │ │ (JWT validate)  │  │
+│  │  env+CLI) │ │  Turso)  │ │                 │  │
+│  └───────────┘ └──────────┘ └─────────────────┘  │
+│  ┌───────────┐ ┌──────────┐ ┌─────────────────┐  │
+│  │  router   │ │  server  │ │    response     │  │
+│  │ (matchit) │ │  (hyper) │ │    (helpers)    │  │
+│  └───────────┘ └──────────┘ └─────────────────┘  │
+│  ┌──────────────────────┐                        │
+│  │     rate_limit       │                        │
+│  │ (per-client sliding) │                        │
+│  └──────────────────────┘                        │
+└────────────────────────┬─────────────────────────┘
+                         │
+           ┌─────────────┼─────────────┐
+           ▼             ▼             ▼
+     ┌───────────┐ ┌───────────┐ ┌───────────┐
+     │  module:  │ │  module:  │ │  module:  │
+     │   users   │ │   auth    │ │   posts   │
+     └───────────┘ └───────────┘ └───────────┘
 ```
+
+## CI
+
+`.github/workflows/ci.yml` runs `cargo fmt --check`, `clippy`, `cargo test`, `cargo audit`, and `cargo deny check`.
 
 ## License
 
