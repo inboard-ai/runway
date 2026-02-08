@@ -34,15 +34,40 @@ pub struct Context {
     pub db: Option<crate::db::Handle>,
     /// Server configuration.
     pub config: SharedConfig,
+    /// Unique request identifier (propagated from client or generated).
+    pub request_id: uuid::Uuid,
+    /// Remote address of the connecting client.
+    pub remote_addr: std::net::SocketAddr,
 }
 
 impl Context {
     /// Parse the request body as JSON.
+    ///
+    /// When the body is non-empty, the `Content-Type` header must be
+    /// `application/json` (with optional parameters like charset).
+    /// Returns `415 Unsupported Media Type` on mismatch.
     pub fn json<T: DeserializeOwned>(&self) -> Result<T> {
         if self.body.is_empty() {
             serde_json::from_value(serde_json::Value::Null)
                 .map_err(|e| crate::Error::BadRequest(format!("Invalid request body: {e}")))
         } else {
+            // Verify Content-Type is application/json
+            let content_type = self
+                .headers
+                .get(hyper::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if !content_type
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("application/json")
+            {
+                return Err(crate::Error::UnsupportedMediaType {
+                    expected: "application/json".to_string(),
+                });
+            }
             serde_json::from_slice(&self.body)
                 .map_err(|e| crate::Error::BadRequest(format!("Invalid request body: {e}")))
         }
@@ -51,6 +76,17 @@ impl Context {
     /// Get a header value by name.
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(name).and_then(|v| v.to_str().ok())
+    }
+
+    /// Return the client IP address, preferring `X-Forwarded-For` when behind
+    /// a reverse proxy, falling back to the direct `remote_addr`.
+    pub fn client_ip(&self) -> std::net::IpAddr {
+        self.headers
+            .get("X-Forwarded-For")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .and_then(|s| s.trim().parse::<std::net::IpAddr>().ok())
+            .unwrap_or_else(|| self.remote_addr.ip())
     }
 
     /// Get a route parameter by name.

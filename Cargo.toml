@@ -6,6 +6,9 @@ rust-version = "1.85"
 description = "Generic backend server library for modular API services"
 license = "MIT"
 
+# Cargo.lock is committed for reproducible CI builds (Rust RFC 2495).
+# 0.x crates (libsql) use minor-version pins since minor bumps can break.
+
 [dependencies]
 # HTTP server
 hyper = { version = "1", features = ["server", "http1", "http2"] }
@@ -28,7 +31,7 @@ toml = "0.8"
 jsonwebtoken = "9"
 
 # IDs and time
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 schemars = { version = "1", features = ["uuid1", "jiff02"] }
 jiff = { version = "0.2", features = ["serde"] }
 

@@ -34,6 +34,16 @@ pub struct Server {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default)]
+    pub hsts: bool,
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+    #[serde(default)]
+    pub cors_credentials: bool,
+    #[serde(default = "default_drain_timeout_secs")]
+    pub drain_timeout_secs: u64,
+    #[serde(default)]
+    pub rate_limit: Option<RateLimitConfig>,
 }
 
 impl Default for Server {
@@ -41,8 +51,17 @@ impl Default for Server {
         Self {
             host: default_host(),
             port: default_port(),
+            hsts: false,
+            cors_origins: Vec::new(),
+            cors_credentials: false,
+            drain_timeout_secs: default_drain_timeout_secs(),
+            rate_limit: None,
         }
     }
+}
+
+fn default_drain_timeout_secs() -> u64 {
+    30
 }
 
 fn default_host() -> String {
@@ -75,14 +94,47 @@ fn default_database_url() -> String {
 /// Authentication settings.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Auth {
-    /// JWT secret for token signing/verification.
+    /// JWT secret for token signing/verification (HS256).
     /// Must be provided via environment variable or CLI - never from config file.
     #[serde(default)]
     pub jwt_secret: String,
 
-    /// Token expiry in days.
+    /// Token expiry in days (default: 1).
     #[serde(default = "default_token_expiry_days")]
     pub token_expiry_days: u32,
+
+    /// Token expiry in hours — overrides `token_expiry_days` when set.
+    #[serde(default)]
+    pub token_expiry_hours: Option<u32>,
+
+    /// JWT issuer (`iss` claim). Validated on verification when set.
+    #[serde(default)]
+    pub jwt_issuer: Option<String>,
+
+    /// JWT audience (`aud` claim). Validated on verification when set.
+    #[serde(default)]
+    pub jwt_audience: Option<String>,
+
+    /// JWT signing algorithm.
+    #[serde(default)]
+    pub jwt_algorithm: JwtAlgorithm,
+
+    /// Path to private key file (PEM) for RS256/ES256.
+    #[serde(default)]
+    pub jwt_private_key_path: Option<String>,
+
+    /// Path to public key file (PEM) for RS256/ES256.
+    #[serde(default)]
+    pub jwt_public_key_path: Option<String>,
+}
+
+/// Supported JWT signing algorithms.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub enum JwtAlgorithm {
+    #[default]
+    HS256,
+    RS256,
+    ES256,
 }
 
 impl std::fmt::Debug for Auth {
@@ -90,6 +142,12 @@ impl std::fmt::Debug for Auth {
         f.debug_struct("Auth")
             .field("jwt_secret", &"[REDACTED]")
             .field("token_expiry_days", &self.token_expiry_days)
+            .field("token_expiry_hours", &self.token_expiry_hours)
+            .field("jwt_issuer", &self.jwt_issuer)
+            .field("jwt_audience", &self.jwt_audience)
+            .field("jwt_algorithm", &self.jwt_algorithm)
+            .field("jwt_private_key_path", &self.jwt_private_key_path)
+            .field("jwt_public_key_path", &self.jwt_public_key_path)
             .finish()
     }
 }
@@ -99,12 +157,46 @@ impl Default for Auth {
         Self {
             jwt_secret: String::new(),
             token_expiry_days: default_token_expiry_days(),
+            token_expiry_hours: None,
+            jwt_issuer: None,
+            jwt_audience: None,
+            jwt_algorithm: JwtAlgorithm::default(),
+            jwt_private_key_path: None,
+            jwt_public_key_path: None,
         }
     }
 }
 
+/// Rate limiting configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    /// Maximum requests per window.
+    #[serde(default = "default_rate_limit_max")]
+    pub max_requests: u32,
+    /// Window duration in seconds.
+    #[serde(default = "default_rate_limit_window")]
+    pub window_secs: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            max_requests: default_rate_limit_max(),
+            window_secs: default_rate_limit_window(),
+        }
+    }
+}
+
+fn default_rate_limit_max() -> u32 {
+    100
+}
+
+fn default_rate_limit_window() -> u64 {
+    60
+}
+
 fn default_token_expiry_days() -> u32 {
-    30
+    1
 }
 
 /// Builder for loading configuration with customizable options.
@@ -184,6 +276,12 @@ impl ConfigLoader {
         if let Ok(secret) = std::env::var(format!("{}_{}", prefix, self.jwt_secret_env)) {
             config.auth.jwt_secret = secret;
         }
+        if let Ok(issuer) = std::env::var(format!("{prefix}_JWT_ISSUER")) {
+            config.auth.jwt_issuer = Some(issuer);
+        }
+        if let Ok(audience) = std::env::var(format!("{prefix}_JWT_AUDIENCE")) {
+            config.auth.jwt_audience = Some(audience);
+        }
 
         // Override with CLI arguments
         if let Some(host) = cli_host {
@@ -200,11 +298,25 @@ impl ConfigLoader {
         }
 
         // Validate required fields
-        if config.auth.jwt_secret.len() < 32 {
-            return Err(Error::Config(format!(
-                "{}_{} must be at least 32 bytes (set via environment variable or --jwt-secret flag)",
-                prefix, self.jwt_secret_env
-            )));
+        match config.auth.jwt_algorithm {
+            JwtAlgorithm::HS256 => {
+                if config.auth.jwt_secret.len() < 32 {
+                    return Err(Error::Config(format!(
+                        "{}_{} must be at least 32 bytes (set via environment variable or --jwt-secret flag)",
+                        prefix, self.jwt_secret_env
+                    )));
+                }
+            }
+            JwtAlgorithm::RS256 | JwtAlgorithm::ES256 => {
+                if config.auth.jwt_private_key_path.is_none()
+                    || config.auth.jwt_public_key_path.is_none()
+                {
+                    return Err(Error::Config(
+                        "jwt_private_key_path and jwt_public_key_path are required for RS256/ES256"
+                            .to_string(),
+                    ));
+                }
+            }
         }
 
         Ok(config)
@@ -260,8 +372,11 @@ mod tests {
     #[test]
     fn test_default_auth_config() {
         let auth = Auth::default();
-        assert_eq!(auth.token_expiry_days, 30);
+        assert_eq!(auth.token_expiry_days, 1);
         assert!(auth.jwt_secret.is_empty());
+        assert!(auth.jwt_issuer.is_none());
+        assert!(auth.jwt_audience.is_none());
+        assert_eq!(auth.jwt_algorithm, JwtAlgorithm::HS256);
     }
 
     #[test]
@@ -292,7 +407,13 @@ token_expiry_days = 7
 
         let loader = ConfigLoader::new("TEST");
         let config = loader
-            .load(Some(file.path()), None, None, None, Some("cli_secret_that_is_at_least_32bytes!"))
+            .load(
+                Some(file.path()),
+                None,
+                None,
+                None,
+                Some("cli_secret_that_is_at_least_32bytes!"),
+            )
             .unwrap();
 
         // Restore DATABASE_URL
@@ -306,7 +427,10 @@ token_expiry_days = 7
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.database.url, "test.db");
-        assert_eq!(config.auth.jwt_secret, "cli_secret_that_is_at_least_32bytes!");
+        assert_eq!(
+            config.auth.jwt_secret,
+            "cli_secret_that_is_at_least_32bytes!"
+        );
         assert_eq!(config.auth.token_expiry_days, 7);
     }
 
@@ -350,7 +474,10 @@ url = "test.db"
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("JWT_SECRET must be at least 32 bytes"));
+        assert!(
+            err.to_string()
+                .contains("JWT_SECRET must be at least 32 bytes")
+        );
     }
 
     #[test]
@@ -376,6 +503,9 @@ url = "test.db"
 
         assert_eq!(config.server.host, "env-host");
         assert_eq!(config.server.port, 9999);
-        assert_eq!(config.auth.jwt_secret, "env_secret_that_is_at_least_32bytes!");
+        assert_eq!(
+            config.auth.jwt_secret,
+            "env_secret_that_is_at_least_32bytes!"
+        );
     }
 }

@@ -171,10 +171,26 @@ fn sanitize_filename(name: &str) -> String {
                 | "PRN"
                 | "AUX"
                 | "NUL"
-                | "COM0" | "COM1" | "COM2" | "COM3" | "COM4"
-                | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
-                | "LPT0" | "LPT1" | "LPT2" | "LPT3" | "LPT4"
-                | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+                | "COM0"
+                | "COM1"
+                | "COM2"
+                | "COM3"
+                | "COM4"
+                | "COM5"
+                | "COM6"
+                | "COM7"
+                | "COM8"
+                | "COM9"
+                | "LPT0"
+                | "LPT1"
+                | "LPT2"
+                | "LPT3"
+                | "LPT4"
+                | "LPT5"
+                | "LPT6"
+                | "LPT7"
+                | "LPT8"
+                | "LPT9"
         );
         if reserved {
             out.insert(stem.len(), '_');
@@ -200,9 +216,8 @@ fn sanitize_filename(name: &str) -> String {
 /// Build a 307 Temporary Redirect response.
 pub fn redirect(location: &str) -> crate::Result<HttpResponse> {
     use hyper::header::HeaderValue;
-    HeaderValue::from_str(location).map_err(|_| {
-        crate::Error::BadRequest(format!("Invalid redirect location: {location}"))
-    })?;
+    HeaderValue::from_str(location)
+        .map_err(|_| crate::Error::BadRequest(format!("Invalid redirect location: {location}")))?;
     Ok(Response::builder()
         .status(StatusCode::TEMPORARY_REDIRECT)
         .header("Location", location)

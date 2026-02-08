@@ -14,21 +14,37 @@ pub trait User {
     fn email(&self) -> &str;
     fn password_hash(&self) -> &str;
 }
-use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
-use crate::config::Auth as AuthConfig;
+use crate::config::{self, JwtAlgorithm};
 use crate::error::{Error, Result};
 
 const MIN_SECRET_LENGTH: usize = 32;
 
-fn validate_secret(config: &AuthConfig) -> Result<()> {
-    if config.jwt_secret.len() < MIN_SECRET_LENGTH {
+fn validate_secret(config: &config::Auth) -> Result<()> {
+    if config.jwt_algorithm == JwtAlgorithm::HS256 && config.jwt_secret.len() < MIN_SECRET_LENGTH {
         return Err(Error::Config(format!(
             "JWT secret must be at least {MIN_SECRET_LENGTH} bytes"
         )));
     }
     Ok(())
+}
+
+/// Read a PEM key file from disk.
+fn read_key_file(path: &str) -> Result<Vec<u8>> {
+    std::fs::read(path).map_err(|e| Error::Config(format!("Failed to read key file {path}: {e}")))
+}
+
+/// Log a warning if issuer/audience are not configured.
+pub fn warn_missing_claims(config: &config::Auth) {
+    if config.jwt_issuer.is_none() {
+        warn!("jwt_issuer is not set — tokens will not contain an 'iss' claim");
+    }
+    if config.jwt_audience.is_none() {
+        warn!("jwt_audience is not set — tokens will not contain an 'aud' claim");
+    }
 }
 
 /// JWT claims structure.
@@ -40,6 +56,12 @@ pub struct Claims {
     pub exp: i64,
     /// Issued at (Unix timestamp)
     pub iat: i64,
+    /// Issuer
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iss: Option<String>,
+    /// Audience
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
 }
 
 /// Create a JWT token for a user.
@@ -47,24 +69,54 @@ pub struct Claims {
 /// # Arguments
 /// * `config` - Auth configuration with JWT secret and expiry settings
 /// * `user_id` - The user ID to encode in the token's `sub` claim
-pub fn create_token(config: &AuthConfig, user_id: &str) -> Result<String> {
+pub fn create_token(config: &config::Auth, user_id: &str) -> Result<String> {
     validate_secret(config)?;
     let now = jiff::Timestamp::now();
-    let hours = config.token_expiry_days as i64 * 24;
+    let hours = config
+        .token_expiry_hours
+        .map(|h| h as i64)
+        .unwrap_or_else(|| config.token_expiry_days as i64 * 24);
     let exp = now + jiff::Span::new().hours(hours);
 
     let claims = Claims {
         sub: user_id.to_string(),
         exp: exp.as_second(),
         iat: now.as_second(),
+        iss: config.jwt_issuer.clone(),
+        aud: config.jwt_audience.clone(),
     };
 
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| Error::Internal(format!("Token creation failed: {e}")))?;
+    let (header, encoding_key) = match config.jwt_algorithm {
+        JwtAlgorithm::HS256 => (
+            Header::new(Algorithm::HS256),
+            EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+        ),
+        JwtAlgorithm::RS256 => {
+            let pem =
+                read_key_file(config.jwt_private_key_path.as_deref().ok_or_else(|| {
+                    Error::Config("jwt_private_key_path required for RS256".into())
+                })?)?;
+            (
+                Header::new(Algorithm::RS256),
+                EncodingKey::from_rsa_pem(&pem)
+                    .map_err(|e| Error::Config(format!("Invalid RSA private key: {e}")))?,
+            )
+        }
+        JwtAlgorithm::ES256 => {
+            let pem =
+                read_key_file(config.jwt_private_key_path.as_deref().ok_or_else(|| {
+                    Error::Config("jwt_private_key_path required for ES256".into())
+                })?)?;
+            (
+                Header::new(Algorithm::ES256),
+                EncodingKey::from_ec_pem(&pem)
+                    .map_err(|e| Error::Config(format!("Invalid EC private key: {e}")))?,
+            )
+        }
+    };
+
+    let token = encode(&header, &claims, &encoding_key)
+        .map_err(|e| Error::Internal(format!("Token creation failed: {e}")))?;
 
     Ok(token)
 }
@@ -75,17 +127,49 @@ pub fn create_token(config: &AuthConfig, user_id: &str) -> Result<String> {
 /// - `Ok(Claims)` if the token is valid
 /// - `Err(Error::TokenExpired)` if the token has expired
 /// - `Err(Error::Unauthorized)` for any other validation failure
-pub fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims> {
+pub fn verify_token(config: &config::Auth, token: &str) -> Result<Claims> {
     validate_secret(config)?;
-    let token_data = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
-        &Validation::default(),
-    )
-    .map_err(|e| match e.kind() {
-        jsonwebtoken::errors::ErrorKind::ExpiredSignature => Error::TokenExpired,
-        _ => Error::Unauthorized,
-    })?;
+
+    let algorithm = match config.jwt_algorithm {
+        JwtAlgorithm::HS256 => Algorithm::HS256,
+        JwtAlgorithm::RS256 => Algorithm::RS256,
+        JwtAlgorithm::ES256 => Algorithm::ES256,
+    };
+
+    let mut validation = Validation::new(algorithm);
+
+    if let Some(ref issuer) = config.jwt_issuer {
+        validation.set_issuer(&[issuer]);
+    }
+    if let Some(ref audience) = config.jwt_audience {
+        validation.set_audience(&[audience]);
+    }
+
+    let decoding_key = match config.jwt_algorithm {
+        JwtAlgorithm::HS256 => DecodingKey::from_secret(config.jwt_secret.as_bytes()),
+        JwtAlgorithm::RS256 => {
+            let pem =
+                read_key_file(config.jwt_public_key_path.as_deref().ok_or_else(|| {
+                    Error::Config("jwt_public_key_path required for RS256".into())
+                })?)?;
+            DecodingKey::from_rsa_pem(&pem)
+                .map_err(|e| Error::Config(format!("Invalid RSA public key: {e}")))?
+        }
+        JwtAlgorithm::ES256 => {
+            let pem =
+                read_key_file(config.jwt_public_key_path.as_deref().ok_or_else(|| {
+                    Error::Config("jwt_public_key_path required for ES256".into())
+                })?)?;
+            DecodingKey::from_ec_pem(&pem)
+                .map_err(|e| Error::Config(format!("Invalid EC public key: {e}")))?
+        }
+    };
+
+    let token_data =
+        decode::<Claims>(token, &decoding_key, &validation).map_err(|e| match e.kind() {
+            jsonwebtoken::errors::ErrorKind::ExpiredSignature => Error::TokenExpired,
+            _ => Error::Unauthorized,
+        })?;
 
     Ok(token_data.claims)
 }
@@ -97,7 +181,7 @@ pub fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims> {
 /// # Returns
 /// - `Ok(user_id)` if the token is valid
 /// - `Err(Error::Unauthorized)` if the header is missing or token is invalid
-pub fn extract_user_id(headers: &HeaderMap, config: &AuthConfig) -> Result<String> {
+pub fn extract_user_id(headers: &HeaderMap, config: &config::Auth) -> Result<String> {
     let auth_header = headers
         .get("Authorization")
         .and_then(|h| h.to_str().ok())
@@ -118,10 +202,11 @@ pub fn extract_user_id(headers: &HeaderMap, config: &AuthConfig) -> Result<Strin
 mod tests {
     use super::*;
 
-    fn test_config() -> AuthConfig {
-        AuthConfig {
+    fn test_config() -> config::Auth {
+        config::Auth {
             jwt_secret: "test_secret_key_for_testing_32b!!".to_string(),
-            token_expiry_days: 30,
+            token_expiry_days: 1,
+            ..Default::default()
         }
     }
 
@@ -149,9 +234,9 @@ mod tests {
         let config = test_config();
         let token = create_token(&config, "user-123").unwrap();
 
-        let wrong_config = AuthConfig {
+        let wrong_config = config::Auth {
             jwt_secret: "different_secret_that_is_32bytes!".to_string(),
-            token_expiry_days: 30,
+            ..Default::default()
         };
 
         let result = verify_token(&wrong_config, &token);

@@ -30,6 +30,12 @@ pub enum Error {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Unsupported media type: expected {expected}")]
+    UnsupportedMediaType { expected: String },
+
+    #[error("Too many requests, retry after {retry_after}s")]
+    TooManyRequests { retry_after: u64 },
+
     // Config errors
     #[error("Configuration error: {0}")]
     Config(String),
@@ -68,6 +74,8 @@ impl Error {
             Error::NotFound(_) => StatusCode::NOT_FOUND,
             Error::BadRequest(_) | Error::AddrParse(_) => StatusCode::BAD_REQUEST,
             Error::Conflict(_) => StatusCode::CONFLICT,
+            Error::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Error::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
 
             // Config errors -> 500 (shouldn't happen at runtime)
             Error::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,

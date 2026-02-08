@@ -3,7 +3,7 @@
 //! Verifies secret handling across config layers and checks for
 //! accidental secret exposure through `Debug` and `Clone`.
 
-use runway::config::{Auth, ConfigLoader, SharedConfig};
+use runway::config;
 
 /// The config loader correctly strips `jwt_secret` from TOML files
 /// before applying environment / CLI overrides.
@@ -21,7 +21,7 @@ token_expiry_days = 7
     )
     .unwrap();
 
-    let loader = ConfigLoader::new("CFGTEST");
+    let loader = config::ConfigLoader::new("CFGTEST");
     let config = loader
         .load(
             Some(file.path()),
@@ -40,9 +40,9 @@ token_expiry_days = 7
 /// `Auth` has a manual `Debug` impl that redacts the JWT secret.
 #[test]
 fn debug_output_leaks_jwt_secret() {
-    let auth = Auth {
+    let auth = config::Auth {
         jwt_secret: "SUPER_SECRET_VALUE".to_string(),
-        token_expiry_days: 30,
+        ..Default::default()
     };
     let debug_output = format!("{:?}", auth);
     assert!(
@@ -59,14 +59,14 @@ fn debug_output_leaks_jwt_secret() {
 /// allocation rather than cloning the secret into every request.
 #[test]
 fn config_cloned_into_every_request_carries_secret() {
-    let config = SharedConfig::new(runway::Config {
-        server: runway::config::Server::default(),
-        database: runway::config::Database::default(),
-        auth: Auth {
+    let cfg = config::SharedConfig::new(runway::Config {
+        server: config::Server::default(),
+        database: config::Database::default(),
+        auth: config::Auth {
             jwt_secret: "secret_in_every_request".to_string(),
-            token_expiry_days: 30,
+            ..Default::default()
         },
     });
-    let cloned = config.clone();
-    assert!(SharedConfig::ptr_eq(&config, &cloned));
+    let cloned = cfg.clone();
+    assert!(config::SharedConfig::ptr_eq(&cfg, &cloned));
 }
