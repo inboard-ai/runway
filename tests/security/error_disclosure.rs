@@ -13,10 +13,9 @@ fn internal_error_leaks_sql() {
     let err = Error::Internal("Failed to query SELECT * FROM users WHERE id = 'x'".into());
     let resp = err.into_response();
     let body = resp.into_body();
-    let bytes =
-        tokio_test::block_on(http_body_util::BodyExt::collect(body))
-            .unwrap()
-            .to_bytes();
+    let bytes = tokio_test::block_on(http_body_util::BodyExt::collect(body))
+        .unwrap()
+        .to_bytes();
     let body_str = String::from_utf8_lossy(&bytes);
     assert!(
         !body_str.contains("SELECT"),
@@ -39,10 +38,9 @@ fn io_error_leaks_paths() {
     let err = Error::Io(io_err);
     let resp = err.into_response();
     let body = resp.into_body();
-    let bytes =
-        tokio_test::block_on(http_body_util::BodyExt::collect(body))
-            .unwrap()
-            .to_bytes();
+    let bytes = tokio_test::block_on(http_body_util::BodyExt::collect(body))
+        .unwrap()
+        .to_bytes();
     let body_str = String::from_utf8_lossy(&bytes);
     assert!(
         !body_str.contains("/etc/secret"),

@@ -54,6 +54,7 @@ pub mod openapi;
 pub mod operation;
 pub mod permission;
 pub mod procedure;
+pub mod rate_limit;
 pub mod response;
 pub mod router;
 pub mod server;
