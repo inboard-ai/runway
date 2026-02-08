@@ -103,12 +103,12 @@ impl Context {
     /// Extract user ID from Authorization header.
     /// Returns None if no valid token is present.
     pub fn user_id(&self) -> Option<String> {
-        crate::auth::extract_user_id(&self.headers, &self.config.auth()).ok()
+        crate::auth::extract_user_id(&self.headers, self.config.auth()).ok()
     }
 
     /// Require authenticated user, returning Unauthorized if not present.
     pub fn require_user_id(&self) -> Result<String> {
-        crate::auth::extract_user_id(&self.headers, &self.config.auth())
+        crate::auth::extract_user_id(&self.headers, self.config.auth())
     }
 
     /// Get the database handle if available.

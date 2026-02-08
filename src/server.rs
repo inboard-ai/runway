@@ -145,7 +145,7 @@ async fn handle_request(
             response
                 .headers_mut()
                 .insert("Retry-After", retry_after.to_string().parse().unwrap());
-            add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
+            add_standard_headers(&mut response, origin.as_deref(), state.config.server());
             response
                 .headers_mut()
                 .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -162,7 +162,7 @@ async fn handle_request(
                     .header("Content-Type", "application/json")
                     .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
                     .unwrap();
-                add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
+                add_standard_headers(&mut response, origin.as_deref(), state.config.server());
                 response
                     .headers_mut()
                     .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -180,7 +180,7 @@ async fn handle_request(
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
                 .unwrap();
-            add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
+            add_standard_headers(&mut response, origin.as_deref(), state.config.server());
             response
                 .headers_mut()
                 .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -197,7 +197,7 @@ async fn handle_request(
             .status(StatusCode::NO_CONTENT)
             .body(Full::new(Bytes::new()))
             .unwrap();
-        add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
+        add_standard_headers(&mut response, origin.as_deref(), state.config.server());
         response
             .headers_mut()
             .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -265,7 +265,7 @@ async fn handle_request(
             .unwrap(),
     };
 
-    add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
+    add_standard_headers(&mut response, origin.as_deref(), state.config.server());
     response
         .headers_mut()
         .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -296,7 +296,7 @@ pub async fn start(
     let addr = listener.local_addr()?;
 
     // Warn if iss/aud are unset (B6)
-    crate::auth::warn_missing_claims(&config.auth());
+    crate::auth::warn_missing_claims(config.auth());
 
     let drain_timeout_secs = config.server().drain_timeout_secs;
 
