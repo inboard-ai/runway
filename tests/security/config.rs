@@ -3,7 +3,7 @@
 //! Verifies secret handling across config layers and checks for
 //! accidental secret exposure through `Debug` and `Clone`.
 
-use runway::config::{Auth, ConfigLoader};
+use runway::config::{Auth, ConfigLoader, SharedConfig};
 
 /// The config loader correctly strips `jwt_secret` from TOML files
 /// before applying environment / CLI overrides.
@@ -28,18 +28,16 @@ token_expiry_days = 7
             None,
             None,
             None,
-            Some("cli_override_secret"),
+            Some("cli_override_secret_at_least_32b!"),
         )
         .unwrap();
     assert_eq!(
-        config.auth.jwt_secret, "cli_override_secret",
+        config.auth.jwt_secret, "cli_override_secret_at_least_32b!",
         "CLI secret must override file secret"
     );
 }
 
-/// `Auth` derives `Debug`, so `format!("{:?}", auth)` includes the
-/// raw JWT secret. Any code path that logs or displays a `Config` or
-/// `Auth` value will leak the signing key.
+/// `Auth` has a manual `Debug` impl that redacts the JWT secret.
 #[test]
 fn debug_output_leaks_jwt_secret() {
     let auth = Auth {
@@ -48,24 +46,27 @@ fn debug_output_leaks_jwt_secret() {
     };
     let debug_output = format!("{:?}", auth);
     assert!(
-        debug_output.contains("SUPER_SECRET_VALUE"),
-        "Debug output leaks the JWT secret: {debug_output}"
+        !debug_output.contains("SUPER_SECRET_VALUE"),
+        "Debug output should not leak the JWT secret: {debug_output}"
+    );
+    assert!(
+        debug_output.contains("[REDACTED]"),
+        "Debug output should contain [REDACTED]: {debug_output}"
     );
 }
 
-/// `Config` is `Clone` and a full copy is placed into every request's
-/// `Context`. This means the JWT secret is duplicated in memory for
-/// every concurrent request, increasing the secret's exposure surface.
+/// `Config` is wrapped in `SharedConfig` so all requests share the same
+/// allocation rather than cloning the secret into every request.
 #[test]
 fn config_cloned_into_every_request_carries_secret() {
-    let config = runway::Config {
+    let config = SharedConfig::new(runway::Config {
         server: runway::config::Server::default(),
         database: runway::config::Database::default(),
         auth: Auth {
             jwt_secret: "secret_in_every_request".to_string(),
             token_expiry_days: 30,
         },
-    };
+    });
     let cloned = config.clone();
-    assert_eq!(cloned.auth.jwt_secret, "secret_in_every_request");
+    assert!(SharedConfig::ptr_eq(&config, &cloned));
 }

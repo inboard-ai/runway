@@ -24,32 +24,27 @@ fn content_disposition_injection_via_filename() {
         .to_str()
         .unwrap();
     assert!(
-        cd.contains("malicious"),
-        "Header injection succeeded: {cd}"
+        !cd.contains("malicious"),
+        "Header injection should not succeed: {cd}"
     );
 }
 
-/// `redirect()` places its argument directly into the `Location` header
-/// with no validation. An attacker-controlled value enables open-redirect.
+/// `redirect()` places its argument into the `Location` header after validation.
 #[test]
 fn redirect_allows_arbitrary_urls() {
-    let resp = response::redirect("https://evil.com/phish");
+    let resp = response::redirect("https://evil.com/phish").unwrap();
     let location = resp.headers().get("Location").unwrap().to_str().unwrap();
     assert_eq!(location, "https://evil.com/phish");
 }
 
-/// When a `Location` value contains CRLF, hyper's `HeaderValue` rejects
-/// it at parse time. Because `redirect()` calls `.unwrap()` on the
-/// response builder, this manifests as a panic (server crash) rather
-/// than a graceful 400 response.
+/// When a `Location` value contains CRLF, `redirect()` returns an `Err`
+/// instead of panicking.
 #[test]
 fn redirect_panics_on_crlf_injection() {
-    let result = std::panic::catch_unwind(|| {
-        response::redirect("https://evil.com\r\nX-Injected: true");
-    });
+    let result = response::redirect("https://evil.com\r\nX-Injected: true");
     assert!(
         result.is_err(),
-        "Expected panic from invalid header value — server would crash on this input"
+        "Expected Err for CRLF injection in redirect location"
     );
 }
 

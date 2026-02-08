@@ -20,6 +20,17 @@ use serde::{Deserialize, Serialize};
 use crate::config::Auth as AuthConfig;
 use crate::error::{Error, Result};
 
+const MIN_SECRET_LENGTH: usize = 32;
+
+fn validate_secret(config: &AuthConfig) -> Result<()> {
+    if config.jwt_secret.len() < MIN_SECRET_LENGTH {
+        return Err(Error::Config(format!(
+            "JWT secret must be at least {MIN_SECRET_LENGTH} bytes"
+        )));
+    }
+    Ok(())
+}
+
 /// JWT claims structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
@@ -37,6 +48,7 @@ pub struct Claims {
 /// * `config` - Auth configuration with JWT secret and expiry settings
 /// * `user_id` - The user ID to encode in the token's `sub` claim
 pub fn create_token(config: &AuthConfig, user_id: &str) -> Result<String> {
+    validate_secret(config)?;
     let now = jiff::Timestamp::now();
     let hours = config.token_expiry_days as i64 * 24;
     let exp = now + jiff::Span::new().hours(hours);
@@ -64,6 +76,7 @@ pub fn create_token(config: &AuthConfig, user_id: &str) -> Result<String> {
 /// - `Err(Error::TokenExpired)` if the token has expired
 /// - `Err(Error::Unauthorized)` for any other validation failure
 pub fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims> {
+    validate_secret(config)?;
     let token_data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
@@ -91,7 +104,9 @@ pub fn extract_user_id(headers: &HeaderMap, config: &AuthConfig) -> Result<Strin
         .ok_or(Error::Unauthorized)?;
 
     let token = auth_header
-        .strip_prefix("Bearer ")
+        .get(..7)
+        .filter(|p| p.eq_ignore_ascii_case("bearer "))
+        .map(|_| &auth_header[7..])
         .ok_or(Error::Unauthorized)?;
 
     let claims = verify_token(config, token)?;
@@ -105,7 +120,7 @@ mod tests {
 
     fn test_config() -> AuthConfig {
         AuthConfig {
-            jwt_secret: "test_secret_key_for_testing".to_string(),
+            jwt_secret: "test_secret_key_for_testing_32b!!".to_string(),
             token_expiry_days: 30,
         }
     }
@@ -135,7 +150,7 @@ mod tests {
         let token = create_token(&config, "user-123").unwrap();
 
         let wrong_config = AuthConfig {
-            jwt_secret: "different_secret".to_string(),
+            jwt_secret: "different_secret_that_is_32bytes!".to_string(),
             token_expiry_days: 30,
         };
 

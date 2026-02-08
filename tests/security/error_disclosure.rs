@@ -19,8 +19,12 @@ fn internal_error_leaks_sql() {
             .to_bytes();
     let body_str = String::from_utf8_lossy(&bytes);
     assert!(
-        body_str.contains("SELECT"),
+        !body_str.contains("SELECT"),
         "SQL fragment leaked to client: {body_str}"
+    );
+    assert!(
+        body_str.contains("Internal server error"),
+        "Expected generic error message, got: {body_str}"
     );
 }
 
@@ -41,7 +45,11 @@ fn io_error_leaks_paths() {
             .to_bytes();
     let body_str = String::from_utf8_lossy(&bytes);
     assert!(
-        body_str.contains("/etc/secret"),
+        !body_str.contains("/etc/secret"),
         "Filesystem path leaked to client: {body_str}"
+    );
+    assert!(
+        body_str.contains("Internal server error"),
+        "Expected generic error message, got: {body_str}"
     );
 }

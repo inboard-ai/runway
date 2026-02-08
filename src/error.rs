@@ -84,8 +84,14 @@ impl Error {
     /// Convert error into HTTP response.
     pub fn into_response(self) -> Response<Full<Bytes>> {
         let status = self.status_code();
+        let message = if status.is_server_error() {
+            tracing::error!("Internal error: {self}");
+            "Internal server error".to_string()
+        } else {
+            self.to_string()
+        };
         let body = serde_json::json!({
-            "error": self.to_string()
+            "error": message
         });
 
         Response::builder()

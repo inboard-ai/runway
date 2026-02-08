@@ -6,31 +6,30 @@
 use runway::auth;
 use runway::config::Auth as AuthConfig;
 
-/// The JWT layer accepts a 1-byte secret, making brute-force trivial.
-/// ConfigLoader does not enforce minimum secret length either — it only
-/// rejects the empty string.
+/// The JWT layer rejects secrets shorter than 32 bytes.
 #[test]
 fn accepts_dangerously_short_secret() {
     let config = AuthConfig {
         jwt_secret: "x".to_string(),
         token_expiry_days: 30,
     };
-    let token = auth::create_token(&config, "user-1").unwrap();
-    let claims = auth::verify_token(&config, &token).unwrap();
-    assert_eq!(claims.sub, "user-1");
+    assert!(
+        auth::create_token(&config, "user-1").is_err(),
+        "Short secret should be rejected"
+    );
 }
 
-/// If someone constructs an `AuthConfig` directly (bypassing ConfigLoader),
-/// the JWT layer happily signs and verifies with an empty secret.
+/// The JWT layer rejects an empty secret.
 #[test]
 fn empty_secret_accepted_at_jwt_layer() {
     let config = AuthConfig {
         jwt_secret: String::new(),
         token_expiry_days: 1,
     };
-    let token = auth::create_token(&config, "admin").unwrap();
-    let claims = auth::verify_token(&config, &token).unwrap();
-    assert_eq!(claims.sub, "admin");
+    assert!(
+        auth::create_token(&config, "admin").is_err(),
+        "Empty secret should be rejected"
+    );
 }
 
 /// `Validation::default()` in jsonwebtoken 9.x restricts to HS256,
@@ -46,7 +45,7 @@ fn rejects_none_algorithm_token() {
     let forged = format!("{header}.{payload}.");
 
     let config = AuthConfig {
-        jwt_secret: "real_secret".to_string(),
+        jwt_secret: "real_secret_that_is_at_least_32b!".to_string(),
         token_expiry_days: 30,
     };
     assert!(auth::verify_token(&config, &forged).is_err());
@@ -57,11 +56,11 @@ fn rejects_none_algorithm_token() {
 #[test]
 fn key_rotation_invalidates_old_tokens() {
     let old = AuthConfig {
-        jwt_secret: "old_secret_key_production".to_string(),
+        jwt_secret: "old_secret_key_production_32byte!".to_string(),
         token_expiry_days: 30,
     };
     let new = AuthConfig {
-        jwt_secret: "new_secret_key_production".to_string(),
+        jwt_secret: "new_secret_key_production_32byte!".to_string(),
         token_expiry_days: 30,
     };
     let token = auth::create_token(&old, "user-1").unwrap();
@@ -69,12 +68,11 @@ fn key_rotation_invalidates_old_tokens() {
 }
 
 /// RFC 7235 says the auth-scheme in `Authorization: Bearer <tok>` is
-/// case-insensitive. `extract_user_id` uses `strip_prefix("Bearer ")`
-/// which is case-sensitive, so `bearer` (lowercase) is rejected.
+/// case-insensitive. `extract_user_id` now handles this correctly.
 #[test]
 fn bearer_prefix_is_case_sensitive() {
     let config = AuthConfig {
-        jwt_secret: "test_secret".to_string(),
+        jwt_secret: "test_secret_that_is_at_least_32b!".to_string(),
         token_expiry_days: 30,
     };
     let token = auth::create_token(&config, "user-1").unwrap();
@@ -86,7 +84,7 @@ fn bearer_prefix_is_case_sensitive() {
     );
     let result = auth::extract_user_id(&headers, &config);
     assert!(
-        result.is_err(),
-        "lowercase 'bearer' is rejected — violates RFC 7235 case-insensitivity"
+        result.is_ok(),
+        "lowercase 'bearer' should be accepted per RFC 7235 case-insensitivity"
     );
 }
