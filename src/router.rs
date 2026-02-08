@@ -11,7 +11,7 @@ use bytes::Bytes;
 use serde::de::DeserializeOwned;
 
 use crate::Result;
-use crate::config::Config;
+use crate::config::SharedConfig;
 use crate::response::HttpResponse;
 use hyper::Method;
 
@@ -30,10 +30,10 @@ pub struct Context {
     pub params: HashMap<String, String>,
     /// The request body, pre-read as bytes.
     pub body: Bytes,
-    /// Database handle (wrapped in Arc for sharing). Optional for modules that don't need a database.
-    pub db: Option<Arc<libsql::Database>>,
+    /// Database handle. Optional for modules that don't need a database.
+    pub db: Option<crate::db::Handle>,
     /// Server configuration.
-    pub config: Config,
+    pub config: SharedConfig,
 }
 
 impl Context {
@@ -76,12 +76,12 @@ impl Context {
     }
 
     /// Get the database handle if available.
-    pub fn db(&self) -> Option<&Arc<libsql::Database>> {
+    pub fn db(&self) -> Option<&crate::db::Handle> {
         self.db.as_ref()
     }
 
     /// Require database, returning Internal error if not configured.
-    pub fn require_db(&self) -> Result<&Arc<libsql::Database>> {
+    pub fn require_db(&self) -> Result<&crate::db::Handle> {
         self.db
             .as_ref()
             .ok_or_else(|| crate::Error::Internal("Database not configured".to_string()))

@@ -59,7 +59,8 @@ pub mod router;
 pub mod server;
 
 // Re-export main types at crate root
-pub use config::{Config, ConfigLoader};
+pub use config::{Config, ConfigLoader, SharedConfig};
+pub use db::Handle as DbHandle;
 pub use error::{Error, Result};
 pub use module::Module;
 pub use openapi::Info;

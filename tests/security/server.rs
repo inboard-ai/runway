@@ -25,7 +25,7 @@ async fn start_test_server() -> server::Server {
             url: ":memory:".to_string(),
         },
         auth: Auth {
-            jwt_secret: "test-secret".to_string(),
+            jwt_secret: "test-secret-that-is-at-least-32b!".to_string(),
             token_expiry_days: 1,
         },
     };
@@ -243,6 +243,14 @@ async fn server_returns_security_headers() {
     assert!(
         response_lower.contains("x-frame-options"),
         "Expected X-Frame-Options header in response:\n{response_str}"
+    );
+    assert!(
+        response_lower.contains("cache-control"),
+        "Expected Cache-Control header in response:\n{response_str}"
+    );
+    assert!(
+        response_lower.contains("content-security-policy"),
+        "Expected Content-Security-Policy header in response:\n{response_str}"
     );
 }
 

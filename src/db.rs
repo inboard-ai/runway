@@ -5,7 +5,12 @@
 //! - In-memory: `:memory:`
 //! - Remote Turso: `libsql://...` or `https://...` (requires TURSO_AUTH_TOKEN env var)
 
+use std::sync::Arc;
+
 use libsql::{Builder, Connection, Database};
+
+/// Shared database handle, cheap to clone.
+pub type Handle = Arc<Database>;
 
 /// Connect to the database.
 ///

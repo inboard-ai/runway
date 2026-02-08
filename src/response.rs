@@ -87,19 +87,27 @@ pub fn binary(data: Bytes, content_type: &str, filename: Option<&str>) -> HttpRe
         .status(StatusCode::OK)
         .header("Content-Type", content_type);
     if let Some(name) = filename {
+        let sanitized: String = name
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+            .collect();
         builder = builder.header(
             "Content-Disposition",
-            format!("attachment; filename=\"{name}\""),
+            format!("attachment; filename=\"{sanitized}\""),
         );
     }
     builder.body(Full::new(data)).unwrap()
 }
 
 /// Build a 307 Temporary Redirect response.
-pub fn redirect(location: &str) -> HttpResponse {
-    Response::builder()
+pub fn redirect(location: &str) -> crate::Result<HttpResponse> {
+    use hyper::header::HeaderValue;
+    HeaderValue::from_str(location).map_err(|_| {
+        crate::Error::BadRequest(format!("Invalid redirect location: {location}"))
+    })?;
+    Ok(Response::builder()
         .status(StatusCode::TEMPORARY_REDIRECT)
         .header("Location", location)
         .body(Full::new(Bytes::new()))
-        .unwrap()
+        .unwrap())
 }

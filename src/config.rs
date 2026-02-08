@@ -10,6 +10,7 @@
 //! environment variable or CLI argument.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +46,7 @@ impl Default for Server {
 }
 
 fn default_host() -> String {
-    "0.0.0.0".to_string()
+    "127.0.0.1".to_string()
 }
 
 fn default_port() -> u16 {
@@ -72,7 +73,7 @@ fn default_database_url() -> String {
 }
 
 /// Authentication settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Auth {
     /// JWT secret for token signing/verification.
     /// Must be provided via environment variable or CLI - never from config file.
@@ -82,6 +83,15 @@ pub struct Auth {
     /// Token expiry in days.
     #[serde(default = "default_token_expiry_days")]
     pub token_expiry_days: u32,
+}
+
+impl std::fmt::Debug for Auth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Auth")
+            .field("jwt_secret", &"[REDACTED]")
+            .field("token_expiry_days", &self.token_expiry_days)
+            .finish()
+    }
 }
 
 impl Default for Auth {
@@ -190,14 +200,47 @@ impl ConfigLoader {
         }
 
         // Validate required fields
-        if config.auth.jwt_secret.is_empty() {
+        if config.auth.jwt_secret.len() < 32 {
             return Err(Error::Config(format!(
-                "{}_{} must be set via environment variable or --jwt-secret flag",
+                "{}_{} must be at least 32 bytes (set via environment variable or --jwt-secret flag)",
                 prefix, self.jwt_secret_env
             )));
         }
 
         Ok(config)
+    }
+}
+
+/// Shared, cheaply cloneable config handle.
+///
+/// Follows the `actix_web::Data<T>` pattern: wraps `Arc<Config>` so callers
+/// never deal with `Arc` directly. Implements `Deref<Target = Config>` for
+/// transparent field access.
+#[derive(Clone)]
+pub struct SharedConfig(Arc<Config>);
+
+impl SharedConfig {
+    /// Wrap an owned `Config` in a shared handle.
+    pub fn new(config: Config) -> Self {
+        Self(Arc::new(config))
+    }
+
+    /// Check whether two handles point to the same allocation.
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Arc::ptr_eq(&this.0, &other.0)
+    }
+}
+
+impl std::ops::Deref for SharedConfig {
+    type Target = Config;
+    fn deref(&self) -> &Config {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SharedConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -210,7 +253,7 @@ mod tests {
     #[test]
     fn test_default_server_config() {
         let server = Server::default();
-        assert_eq!(server.host, "0.0.0.0");
+        assert_eq!(server.host, "127.0.0.1");
         assert_eq!(server.port, 8080);
     }
 
@@ -249,7 +292,7 @@ token_expiry_days = 7
 
         let loader = ConfigLoader::new("TEST");
         let config = loader
-            .load(Some(file.path()), None, None, None, Some("cli_secret"))
+            .load(Some(file.path()), None, None, None, Some("cli_secret_that_is_at_least_32bytes!"))
             .unwrap();
 
         // Restore DATABASE_URL
@@ -263,7 +306,7 @@ token_expiry_days = 7
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.database.url, "test.db");
-        assert_eq!(config.auth.jwt_secret, "cli_secret");
+        assert_eq!(config.auth.jwt_secret, "cli_secret_that_is_at_least_32bytes!");
         assert_eq!(config.auth.token_expiry_days, 7);
     }
 
@@ -290,14 +333,14 @@ url = "test.db"
                 Some("0.0.0.0"),
                 Some(8080),
                 Some("postgres://localhost/db"),
-                Some("my_secret"),
+                Some("my_secret_that_is_long_enough_32b"),
             )
             .unwrap();
 
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 8080);
         assert_eq!(config.database.url, "postgres://localhost/db");
-        assert_eq!(config.auth.jwt_secret, "my_secret");
+        assert_eq!(config.auth.jwt_secret, "my_secret_that_is_long_enough_32b");
     }
 
     #[test]
@@ -307,7 +350,7 @@ url = "test.db"
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("JWT_SECRET must be set"));
+        assert!(err.to_string().contains("JWT_SECRET must be at least 32 bytes"));
     }
 
     #[test]
@@ -317,7 +360,7 @@ url = "test.db"
         unsafe {
             std::env::set_var("TESTENV_HOST", "env-host");
             std::env::set_var("TESTENV_PORT", "9999");
-            std::env::set_var("TESTENV_JWT_SECRET", "env_secret");
+            std::env::set_var("TESTENV_JWT_SECRET", "env_secret_that_is_at_least_32bytes!");
         }
 
         let loader = ConfigLoader::new("TESTENV");
@@ -333,6 +376,6 @@ url = "test.db"
 
         assert_eq!(config.server.host, "env-host");
         assert_eq!(config.server.port, 9999);
-        assert_eq!(config.auth.jwt_secret, "env_secret");
+        assert_eq!(config.auth.jwt_secret, "env_secret_that_is_at_least_32bytes!");
     }
 }

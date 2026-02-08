@@ -16,7 +16,7 @@ use tokio::sync::{Semaphore, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use crate::config::Config;
+use crate::config::{Config, SharedConfig};
 use crate::router::{Context, RouteMatch, RouterHandle};
 
 /// Maximum request body size in bytes (1 MB).
@@ -30,8 +30,8 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Shared server state.
 pub struct State {
-    pub config: Config,
-    pub db: Option<Arc<libsql::Database>>,
+    pub config: SharedConfig,
+    pub db: Option<crate::db::Handle>,
     pub router: Arc<RouterHandle>,
 }
 
@@ -60,6 +60,11 @@ fn add_standard_headers(response: &mut Response<Full<Bytes>>, origin: Option<&st
     let headers = response.headers_mut();
     headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
     headers.insert("X-Frame-Options", "DENY".parse().unwrap());
+    headers.insert("Cache-Control", "no-store".parse().unwrap());
+    headers.insert(
+        "Content-Security-Policy",
+        "default-src 'none'".parse().unwrap(),
+    );
     if let Some(origin) = origin {
         headers.insert(
             "Access-Control-Allow-Origin",
@@ -73,6 +78,7 @@ async fn handle_request(
     req: Request<Incoming>,
     state: Arc<State>,
 ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
+    let start = std::time::Instant::now();
     let (parts, body) = req.into_parts();
 
     // Extract Origin header for CORS before parts are consumed
@@ -115,11 +121,11 @@ async fn handle_request(
         }
     };
 
-    let method = &parts.method;
+    let method = parts.method.clone();
     let path = parts.uri.path().to_string();
 
     // Match route
-    let mut response = match state.router.match_route(method, &path) {
+    let mut response = match state.router.match_route(&method, &path) {
         RouteMatch::Matched { handler, params } => {
             let ctx = Context {
                 method: parts.method,
@@ -149,6 +155,8 @@ async fn handle_request(
     };
 
     add_standard_headers(&mut response, origin.as_deref());
+    let elapsed = start.elapsed();
+    info!("{method} {path} {} {elapsed:.3?}", response.status().as_u16());
     Ok(response)
 }
 
@@ -158,14 +166,14 @@ async fn handle_request(
 /// [`shutdown`](Server::shutdown) method for graceful termination.
 pub async fn start(
     config: Config,
-    db: Option<Arc<libsql::Database>>,
+    db: Option<crate::db::Handle>,
     router: Arc<RouterHandle>,
 ) -> crate::Result<Server> {
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
     let listener = TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;
 
-    let state = Arc::new(State { config, db, router });
+    let state = Arc::new(State { config: SharedConfig::new(config), db, router });
 
     info!("Server listening on http://{}", addr);
 
@@ -251,7 +259,7 @@ pub async fn start(
 /// * `router` - Router handle with registered routes
 pub async fn run(
     config: Config,
-    db: Option<Arc<libsql::Database>>,
+    db: Option<crate::db::Handle>,
     router: Arc<RouterHandle>,
 ) -> crate::Result<()> {
     let server = start(config, db, router).await?;
