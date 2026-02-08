@@ -11,6 +11,8 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::config::Config;
@@ -21,6 +23,26 @@ pub struct State {
     pub config: Config,
     pub db: Option<Arc<libsql::Database>>,
     pub router: Arc<RouterHandle>,
+}
+
+/// Handle to a running server instance.
+pub struct Server {
+    addr: SocketAddr,
+    shutdown_tx: oneshot::Sender<()>,
+    task: JoinHandle<crate::Result<()>>,
+}
+
+impl Server {
+    /// The address the server is listening on.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Shut down the accept loop and wait for it to finish.
+    pub async fn shutdown(self) -> crate::Result<()> {
+        let _ = self.shutdown_tx.send(());
+        self.task.await.unwrap_or(Ok(()))
+    }
 }
 
 /// Handle an incoming HTTP request.
@@ -70,6 +92,62 @@ async fn handle_request(
     }
 }
 
+/// Bind, start accepting connections, and return a handle.
+///
+/// The returned [`Server`] exposes the bound address and a
+/// [`shutdown`](Server::shutdown) method for graceful termination.
+pub async fn start(
+    config: Config,
+    db: Option<Arc<libsql::Database>>,
+    router: Arc<RouterHandle>,
+) -> crate::Result<Server> {
+    let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
+    let listener = TcpListener::bind(addr).await?;
+    let addr = listener.local_addr()?;
+
+    let state = Arc::new(State { config, db, router });
+
+    info!("Server listening on http://{}", addr);
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+    let task = tokio::spawn(async move {
+        tokio::pin!(shutdown_rx);
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    let (stream, remote_addr) = result?;
+                    let io = TokioIo::new(stream);
+                    let state = Arc::clone(&state);
+
+                    tokio::spawn(async move {
+                        let service = service_fn(move |req| {
+                            let state = Arc::clone(&state);
+                            handle_request(req, state)
+                        });
+
+                        if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+                            error!("Error serving connection from {}: {}", remote_addr, e);
+                        }
+                    });
+                }
+                _ = &mut shutdown_rx => {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    });
+
+    Ok(Server {
+        addr,
+        shutdown_tx,
+        task,
+    })
+}
+
 /// Run the HTTP server.
 ///
 /// # Arguments
@@ -81,27 +159,6 @@ pub async fn run(
     db: Option<Arc<libsql::Database>>,
     router: Arc<RouterHandle>,
 ) -> crate::Result<()> {
-    let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
-    let listener = TcpListener::bind(addr).await?;
-
-    let state = Arc::new(State { config, db, router });
-
-    info!("Server listening on http://{}", addr);
-
-    loop {
-        let (stream, remote_addr) = listener.accept().await?;
-        let io = TokioIo::new(stream);
-        let state = Arc::clone(&state);
-
-        tokio::spawn(async move {
-            let service = service_fn(move |req| {
-                let state = Arc::clone(&state);
-                handle_request(req, state)
-            });
-
-            if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
-                error!("Error serving connection from {}: {}", remote_addr, e);
-            }
-        });
-    }
+    let server = start(config, db, router).await?;
+    server.task.await.unwrap_or(Ok(()))
 }
