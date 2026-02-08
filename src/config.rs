@@ -18,13 +18,35 @@ use crate::Error;
 
 /// Server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
+pub struct Internal {
     #[serde(default)]
-    pub server: Server,
+    server: Server,
     #[serde(default)]
-    pub database: Database,
+    database: Database,
     #[serde(default)]
-    pub auth: Auth,
+    auth: Auth,
+}
+
+impl Internal {
+    pub fn server(&self) -> &Server {
+        &self.server
+    }
+
+    pub fn database(&self) -> &Database {
+        &self.database
+    }
+
+    pub fn auth(&self) -> &Auth {
+        &self.auth
+    }
+
+    pub fn host(&self) -> &str {
+        &self.server.host
+    }
+
+    pub fn port(&self) -> u16 {
+        self.server.port
+    }
 }
 
 /// HTTP server settings.
@@ -43,7 +65,7 @@ pub struct Server {
     #[serde(default = "default_drain_timeout_secs")]
     pub drain_timeout_secs: u64,
     #[serde(default)]
-    pub rate_limit: Option<RateLimitConfig>,
+    pub rate_limit: Option<RateLimit>,
 }
 
 impl Default for Server {
@@ -169,7 +191,7 @@ impl Default for Auth {
 
 /// Rate limiting configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RateLimitConfig {
+pub struct RateLimit {
     /// Maximum requests per window.
     #[serde(default = "default_rate_limit_max")]
     pub max_requests: u32,
@@ -178,7 +200,7 @@ pub struct RateLimitConfig {
     pub window_secs: u64,
 }
 
-impl Default for RateLimitConfig {
+impl Default for RateLimit {
     fn default() -> Self {
         Self {
             max_requests: default_rate_limit_max(),
@@ -201,14 +223,14 @@ fn default_token_expiry_days() -> u32 {
 
 /// Builder for loading configuration with customizable options.
 #[derive(Debug, Clone)]
-pub struct ConfigLoader {
+pub struct Loader {
     /// Environment variable prefix (e.g., "MYAPP" -> MYAPP_HOST, MYAPP_PORT)
     pub env_prefix: String,
     /// Name of the JWT secret environment variable (without prefix)
     pub jwt_secret_env: String,
 }
 
-impl Default for ConfigLoader {
+impl Default for Loader {
     fn default() -> Self {
         Self {
             env_prefix: "RUNWAY".to_string(),
@@ -217,7 +239,7 @@ impl Default for ConfigLoader {
     }
 }
 
-impl ConfigLoader {
+impl Loader {
     /// Create a new config loader with the given environment prefix.
     pub fn new(env_prefix: impl Into<String>) -> Self {
         Self {
@@ -241,15 +263,15 @@ impl ConfigLoader {
         cli_port: Option<u16>,
         cli_database_url: Option<&str>,
         cli_jwt_secret: Option<&str>,
-    ) -> crate::Result<Config> {
+    ) -> crate::Result<Internal> {
         // Start with file config or defaults
-        let mut config: Config = if let Some(path) = config_path {
+        let mut config: Internal = if let Some(path) = config_path {
             let content = std::fs::read_to_string(path)
                 .map_err(|e| Error::Config(format!("Failed to read config file: {e}")))?;
             toml::from_str(&content)
                 .map_err(|e| Error::Config(format!("Failed to parse config: {e}")))?
         } else {
-            Config {
+            Internal {
                 server: Server::default(),
                 database: Database::default(),
                 auth: Auth::default(),
@@ -329,12 +351,16 @@ impl ConfigLoader {
 /// never deal with `Arc` directly. Implements `Deref<Target = Config>` for
 /// transparent field access.
 #[derive(Clone)]
-pub struct SharedConfig(Arc<Config>);
+pub struct Config(Arc<Internal>);
 
-impl SharedConfig {
+impl Config {
     /// Wrap an owned `Config` in a shared handle.
-    pub fn new(config: Config) -> Self {
-        Self(Arc::new(config))
+    pub fn new(server: Server, database: Database, auth: Auth) -> Self {
+        Self(Arc::new(Internal {
+            server,
+            database,
+            auth,
+        }))
     }
 
     /// Check whether two handles point to the same allocation.
@@ -343,14 +369,14 @@ impl SharedConfig {
     }
 }
 
-impl std::ops::Deref for SharedConfig {
-    type Target = Config;
-    fn deref(&self) -> &Config {
+impl std::ops::Deref for Config {
+    type Target = Internal;
+    fn deref(&self) -> &Internal {
         &self.0
     }
 }
 
-impl std::fmt::Debug for SharedConfig {
+impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
     }
@@ -405,7 +431,7 @@ token_expiry_days = 7
         )
         .unwrap();
 
-        let loader = ConfigLoader::new("TEST");
+        let loader = Loader::new("TEST");
         let config = loader
             .load(
                 Some(file.path()),
@@ -450,7 +476,7 @@ url = "test.db"
         )
         .unwrap();
 
-        let loader = ConfigLoader::new("TEST");
+        let loader = Loader::new("TEST");
         let config = loader
             .load(
                 Some(file.path()),
@@ -469,7 +495,7 @@ url = "test.db"
 
     #[test]
     fn test_missing_jwt_secret_fails() {
-        let loader = ConfigLoader::new("TEST");
+        let loader = Loader::new("TEST");
         let result = loader.load(None, None, None, None, None);
 
         assert!(result.is_err());
@@ -490,7 +516,7 @@ url = "test.db"
             std::env::set_var("TESTENV_JWT_SECRET", "env_secret_that_is_at_least_32bytes!");
         }
 
-        let loader = ConfigLoader::new("TESTENV");
+        let loader = Loader::new("TESTENV");
         let config = loader.load(None, None, None, None, None).unwrap();
 
         // Clean up

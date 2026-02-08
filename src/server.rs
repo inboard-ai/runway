@@ -16,7 +16,8 @@ use tokio::sync::{Semaphore, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use crate::config::{Config, SharedConfig};
+use crate::config::Config;
+use crate::db;
 use crate::router::{Context, RouteMatch, RouterHandle};
 
 /// Maximum request body size in bytes (1 MB).
@@ -30,8 +31,8 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Shared server state.
 pub struct State {
-    pub config: SharedConfig,
-    pub db: Option<crate::db::Handle>,
+    pub config: Config,
+    pub db: Option<db::Handle>,
     pub router: Arc<RouterHandle>,
     pub rate_limiter: Option<Arc<crate::rate_limit::RateLimiter>>,
 }
@@ -144,7 +145,7 @@ async fn handle_request(
             response
                 .headers_mut()
                 .insert("Retry-After", retry_after.to_string().parse().unwrap());
-            add_standard_headers(&mut response, origin.as_deref(), &state.config.server);
+            add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
             response
                 .headers_mut()
                 .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -161,7 +162,7 @@ async fn handle_request(
                     .header("Content-Type", "application/json")
                     .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
                     .unwrap();
-                add_standard_headers(&mut response, origin.as_deref(), &state.config.server);
+                add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
                 response
                     .headers_mut()
                     .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -179,7 +180,7 @@ async fn handle_request(
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
                 .unwrap();
-            add_standard_headers(&mut response, origin.as_deref(), &state.config.server);
+            add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
             response
                 .headers_mut()
                 .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -196,7 +197,7 @@ async fn handle_request(
             .status(StatusCode::NO_CONTENT)
             .body(Full::new(Bytes::new()))
             .unwrap();
-        add_standard_headers(&mut response, origin.as_deref(), &state.config.server);
+        add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
         response
             .headers_mut()
             .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -264,7 +265,7 @@ async fn handle_request(
             .unwrap(),
     };
 
-    add_standard_headers(&mut response, origin.as_deref(), &state.config.server);
+    add_standard_headers(&mut response, origin.as_deref(), &state.config.server());
     response
         .headers_mut()
         .insert("X-Request-Id", request_id.to_string().parse().unwrap());
@@ -287,20 +288,20 @@ async fn handle_request(
 /// [`shutdown`](Server::shutdown) method for graceful termination.
 pub async fn start(
     config: Config,
-    db: Option<crate::db::Handle>,
+    db: Option<db::Handle>,
     router: Arc<RouterHandle>,
 ) -> crate::Result<Server> {
-    let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port).parse()?;
+    let addr: SocketAddr = format!("{}:{}", config.host(), config.port()).parse()?;
     let listener = TcpListener::bind(addr).await?;
     let addr = listener.local_addr()?;
 
     // Warn if iss/aud are unset (B6)
-    crate::auth::warn_missing_claims(&config.auth);
+    crate::auth::warn_missing_claims(&config.auth());
 
-    let drain_timeout_secs = config.server.drain_timeout_secs;
+    let drain_timeout_secs = config.server().drain_timeout_secs;
 
     // Build rate limiter from config (B4)
-    let rate_limiter = config.server.rate_limit.as_ref().map(|rl| {
+    let rate_limiter = config.server().rate_limit.as_ref().map(|rl| {
         Arc::new(crate::rate_limit::RateLimiter::new(
             rl.max_requests,
             rl.window_secs,
@@ -320,7 +321,7 @@ pub async fn start(
     }
 
     let state = Arc::new(State {
-        config: SharedConfig::new(config),
+        config,
         db,
         router,
         rate_limiter,
@@ -435,7 +436,7 @@ pub async fn start(
 /// * `router` - Router handle with registered routes
 pub async fn run(
     config: Config,
-    db: Option<crate::db::Handle>,
+    db: Option<db::Handle>,
     router: Arc<RouterHandle>,
 ) -> crate::Result<()> {
     let server = start(config, db, router).await?;

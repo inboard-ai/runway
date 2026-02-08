@@ -21,7 +21,7 @@ token_expiry_days = 7
     )
     .unwrap();
 
-    let loader = config::ConfigLoader::new("CFGTEST");
+    let loader = config::Loader::new("CFGTEST");
     let config = loader
         .load(
             Some(file.path()),
@@ -32,7 +32,8 @@ token_expiry_days = 7
         )
         .unwrap();
     assert_eq!(
-        config.auth.jwt_secret, "cli_override_secret_at_least_32b!",
+        config.auth().jwt_secret,
+        "cli_override_secret_at_least_32b!",
         "CLI secret must override file secret"
     );
 }
@@ -59,14 +60,14 @@ fn debug_output_leaks_jwt_secret() {
 /// allocation rather than cloning the secret into every request.
 #[test]
 fn config_cloned_into_every_request_carries_secret() {
-    let cfg = config::SharedConfig::new(runway::Config {
-        server: config::Server::default(),
-        database: config::Database::default(),
-        auth: config::Auth {
+    let cfg = config::Config::new(
+        config::Server::default(),
+        config::Database::default(),
+        config::Auth {
             jwt_secret: "secret_in_every_request".to_string(),
             ..Default::default()
         },
-    });
+    );
     let cloned = cfg.clone();
-    assert!(config::SharedConfig::ptr_eq(&cfg, &cloned));
+    assert!(config::Config::ptr_eq(&cfg, &cloned));
 }

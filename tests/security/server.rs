@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 
-use runway::config::{Auth, Config, Database, RateLimitConfig, Server as ServerConfig};
+use runway::config::{self, RateLimit};
 use runway::server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -17,26 +17,26 @@ use tokio::net::TcpStream;
 /// Start a test server on a random port with `/echo` (POST), `/ping` (GET),
 /// and `/panic` (GET) routes using default config (no CORS, no HSTS).
 async fn start_test_server() -> server::Server {
-    start_test_server_with_config(ServerConfig::default()).await
+    start_test_server_with_config(config::Server::default()).await
 }
 
-/// Start a test server with a custom `ServerConfig`.
-async fn start_test_server_with_config(server_cfg: ServerConfig) -> server::Server {
-    let config = Config {
-        server: ServerConfig {
+/// Start a test server with a custom `config::Server`.
+async fn start_test_server_with_config(server_cfg: config::Server) -> server::Server {
+    let config = config::Config::new(
+        config::Server {
             host: "127.0.0.1".to_string(),
             port: 0,
             ..server_cfg
         },
-        database: Database {
+        config::Database {
             url: ":memory:".to_string(),
         },
-        auth: Auth {
+        config::Auth {
             jwt_secret: "test-secret-that-is-at-least-32b!".to_string(),
             token_expiry_days: 1,
             ..Default::default()
         },
-    };
+    );
 
     let mut router = runway::Router::new();
 
@@ -209,7 +209,7 @@ async fn server_closes_slow_connections() {
 /// and the origin is in the allowlist.
 #[tokio::test]
 async fn server_returns_cors_headers() {
-    let server = start_test_server_with_config(ServerConfig {
+    let server = start_test_server_with_config(config::Server {
         cors_origins: vec!["http://example.com".to_string()],
         ..Default::default()
     })
@@ -422,7 +422,7 @@ async fn server_rejects_wrong_content_type() {
 /// D9: Origins not in the allowlist do not get CORS headers.
 #[tokio::test]
 async fn server_rejects_unlisted_origin() {
-    let server = start_test_server_with_config(ServerConfig {
+    let server = start_test_server_with_config(config::Server {
         cors_origins: vec!["http://allowed.com".to_string()],
         ..Default::default()
     })
@@ -449,7 +449,7 @@ async fn server_rejects_unlisted_origin() {
 /// D9: Matching origin gets reflected.
 #[tokio::test]
 async fn server_allows_listed_origin() {
-    let server = start_test_server_with_config(ServerConfig {
+    let server = start_test_server_with_config(config::Server {
         cors_origins: vec!["http://allowed.com".to_string()],
         ..Default::default()
     })
@@ -474,7 +474,7 @@ async fn server_allows_listed_origin() {
 /// D9: OPTIONS preflight returns 204 with CORS headers.
 #[tokio::test]
 async fn server_handles_options_preflight() {
-    let server = start_test_server_with_config(ServerConfig {
+    let server = start_test_server_with_config(config::Server {
         cors_origins: vec!["http://app.com".to_string()],
         ..Default::default()
     })
@@ -505,7 +505,7 @@ async fn server_handles_options_preflight() {
 /// D9: Wildcard `["*"]` allows any origin.
 #[tokio::test]
 async fn server_wildcard_cors() {
-    let server = start_test_server_with_config(ServerConfig {
+    let server = start_test_server_with_config(config::Server {
         cors_origins: vec!["*".to_string()],
         ..Default::default()
     })
@@ -530,7 +530,7 @@ async fn server_wildcard_cors() {
 /// C8: HSTS header is present when enabled.
 #[tokio::test]
 async fn server_returns_hsts_when_enabled() {
-    let server = start_test_server_with_config(ServerConfig {
+    let server = start_test_server_with_config(config::Server {
         hsts: true,
         ..Default::default()
     })
@@ -641,8 +641,8 @@ async fn server_drains_on_shutdown() {
 /// B4: Rate limiter returns 429 after exceeding the limit.
 #[tokio::test]
 async fn server_rate_limits_by_ip() {
-    let server = start_test_server_with_config(ServerConfig {
-        rate_limit: Some(RateLimitConfig {
+    let server = start_test_server_with_config(config::Server {
+        rate_limit: Some(RateLimit {
             max_requests: 3,
             window_secs: 60,
         }),

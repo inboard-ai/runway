@@ -11,7 +11,7 @@ use bytes::Bytes;
 use serde::de::DeserializeOwned;
 
 use crate::Result;
-use crate::config::SharedConfig;
+use crate::config::Config;
 use crate::response::HttpResponse;
 use hyper::Method;
 
@@ -33,7 +33,7 @@ pub struct Context {
     /// Database handle. Optional for modules that don't need a database.
     pub db: Option<crate::db::Handle>,
     /// Server configuration.
-    pub config: SharedConfig,
+    pub config: Config,
     /// Unique request identifier (propagated from client or generated).
     pub request_id: uuid::Uuid,
     /// Remote address of the connecting client.
@@ -103,12 +103,12 @@ impl Context {
     /// Extract user ID from Authorization header.
     /// Returns None if no valid token is present.
     pub fn user_id(&self) -> Option<String> {
-        crate::auth::extract_user_id(&self.headers, &self.config.auth).ok()
+        crate::auth::extract_user_id(&self.headers, &self.config.auth()).ok()
     }
 
     /// Require authenticated user, returning Unauthorized if not present.
     pub fn require_user_id(&self) -> Result<String> {
-        crate::auth::extract_user_id(&self.headers, &self.config.auth)
+        crate::auth::extract_user_id(&self.headers, &self.config.auth())
     }
 
     /// Get the database handle if available.

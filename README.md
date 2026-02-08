@@ -25,7 +25,7 @@ impl Module for MyModule {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = runway::ConfigLoader::new("MYAPP")
+    let config = runway::Loader::new("MYAPP")
         // JWT secret must be >= 32 bytes for HS256
         .load(None, None, None, None, Some("change-me-to-a-real-secret-at-least-32-bytes!"))?;
 
