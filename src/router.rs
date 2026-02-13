@@ -137,6 +137,7 @@ struct RouteEntry {
 pub struct Router {
     routes: matchit::Router<usize>,
     entries: Vec<RouteEntry>,
+    path_index: HashMap<String, usize>,
     pub(crate) operations: Vec<crate::operation::Meta>,
 }
 
@@ -146,6 +147,7 @@ impl Router {
         Self {
             routes: matchit::Router::new(),
             entries: Vec::new(),
+            path_index: HashMap::new(),
             operations: Vec::new(),
         }
     }
@@ -164,16 +166,22 @@ impl Router {
         Fut: Future<Output = Result<HttpResponse>> + Send + 'static,
     {
         // Find or create route entry for this path
-        let entry_idx = match self.routes.at(path) {
-            Ok(matched) => *matched.value,
-            Err(_) => {
-                let idx = self.entries.len();
-                self.entries.push(RouteEntry {
-                    handlers: HashMap::new(),
-                });
-                self.routes.insert(path, idx).ok();
-                idx
+        let entry_idx = if let Some(&idx) = self.path_index.get(path) {
+            idx
+        } else {
+            let idx = self.entries.len();
+            self.entries.push(RouteEntry {
+                handlers: HashMap::new(),
+            });
+            if let Err(e) = self.routes.insert(path, idx) {
+                if cfg!(debug_assertions) {
+                    panic!("conflicting route pattern \"{path}\": {e}");
+                }
+                tracing::error!("conflicting route pattern \"{path}\": {e} — skipping");
+                return;
             }
+            self.path_index.insert(path.to_string(), idx);
+            idx
         };
 
         // Add handler for this method
