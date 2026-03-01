@@ -1463,6 +1463,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-core",
+ "http-body 1.0.1",
  "http-body-util",
  "hyper 1.8.1",
  "hyper-util",

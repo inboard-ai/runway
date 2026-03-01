@@ -1,16 +1,70 @@
 //! HTTP response builders.
 //!
-//! Provides convenient functions for building JSON responses.
+//! Provides convenient functions for building JSON and streaming responses.
+
+use std::convert::Infallible;
+use std::pin::Pin;
+use std::task::{Context as TaskContext, Poll};
 
 use bytes::Bytes;
+use futures_core::Stream;
+use http_body::Frame;
 use http_body_util::Full;
 use hyper::{Response, StatusCode};
 use serde::Serialize;
 
 /// Response body type used throughout runway.
-pub type Body = Full<Bytes>;
+///
+/// Supports both buffered (`Full`) and streaming responses.
+pub enum Body {
+    /// A fully-buffered response body.
+    Full(Full<Bytes>),
+    /// A streaming response body (e.g. for SSE).
+    Stream(Pin<Box<dyn http_body::Body<Data = Bytes, Error = Infallible> + Send>>),
+}
 
-/// Full response type used throughout runway.
+impl Body {
+    /// Create a buffered body from bytes.
+    pub fn full(data: Bytes) -> Self {
+        Body::Full(Full::new(data))
+    }
+
+    /// Create an empty body.
+    pub fn empty() -> Self {
+        Body::Full(Full::new(Bytes::new()))
+    }
+}
+
+impl http_body::Body for Body {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.get_mut() {
+            Body::Full(full) => Pin::new(full).poll_frame(cx),
+            Body::Stream(stream) => stream.as_mut().poll_frame(cx),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        match self {
+            Body::Full(full) => full.is_end_stream(),
+            Body::Stream(_) => false,
+        }
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        match self {
+            Body::Full(full) => http_body::Body::size_hint(full),
+            Body::Stream(_) => http_body::SizeHint::default(),
+        }
+    }
+}
+
+/// HTTP response type used throughout runway.
 pub type HttpResponse = Response<Body>;
 
 /// Build a JSON response with the given status code and body.
@@ -19,7 +73,7 @@ pub fn json<T: Serialize>(status: StatusCode, body: &T) -> crate::Result<HttpRes
     Ok(Response::builder()
         .status(status)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(json)))
+        .body(Body::full(Bytes::from(json)))
         .unwrap())
 }
 
@@ -37,7 +91,7 @@ pub fn created<T: Serialize>(body: &T) -> crate::Result<HttpResponse> {
 pub fn no_content() -> HttpResponse {
     Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .body(Full::new(Bytes::new()))
+        .body(Body::empty())
         .unwrap()
 }
 
@@ -47,7 +101,7 @@ pub fn not_found(message: &str) -> HttpResponse {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(Body::full(Bytes::from(body.to_string())))
         .unwrap()
 }
 
@@ -57,7 +111,7 @@ pub fn bad_request(message: &str) -> HttpResponse {
     Response::builder()
         .status(StatusCode::BAD_REQUEST)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(Body::full(Bytes::from(body.to_string())))
         .unwrap()
 }
 
@@ -67,7 +121,7 @@ pub fn unauthorized() -> HttpResponse {
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(Body::full(Bytes::from(body.to_string())))
         .unwrap()
 }
 
@@ -77,7 +131,7 @@ pub fn internal_error(message: &str) -> HttpResponse {
     Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(Body::full(Bytes::from(body.to_string())))
         .unwrap()
 }
 
@@ -95,7 +149,7 @@ pub fn binary(data: Bytes, content_type: &str, filename: Option<&str>) -> HttpRe
             );
         }
     }
-    builder.body(Full::new(data)).unwrap()
+    builder.body(Body::full(data)).unwrap()
 }
 
 /// Sanitize a filename for safe use in Content-Disposition headers.
@@ -221,6 +275,54 @@ pub fn redirect(location: &str) -> crate::Result<HttpResponse> {
     Ok(Response::builder()
         .status(StatusCode::TEMPORARY_REDIRECT)
         .header("Location", location)
-        .body(Full::new(Bytes::new()))
+        .body(Body::empty())
         .unwrap())
+}
+
+/// Build a streaming SSE response from an async stream of text chunks.
+///
+/// The caller is responsible for formatting SSE frames (`event:`, `data:`,
+/// trailing `\n\n`) and managing heartbeats. This helper only sets the
+/// required headers and wires up the stream as the response body.
+pub fn sse<S>(stream: S) -> crate::Result<HttpResponse>
+where
+    S: Stream<Item = Result<String, Infallible>> + Send + 'static,
+{
+    let body = SseBody {
+        stream: Box::pin(stream),
+    };
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::Stream(Box::pin(body)))
+        .unwrap())
+}
+
+/// Streaming body adapter that converts `Stream<Item = Result<String, Infallible>>`
+/// into an `http_body::Body` yielding `Frame<Bytes>`.
+struct SseBody<S> {
+    stream: Pin<Box<S>>,
+}
+
+impl<S> http_body::Body for SseBody<S>
+where
+    S: Stream<Item = Result<String, Infallible>> + Send + 'static,
+{
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        match this.stream.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(text))) => Poll::Ready(Some(Ok(Frame::data(Bytes::from(text))))),
+            Poll::Ready(Some(Err(infallible))) => match infallible {},
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
 }

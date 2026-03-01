@@ -1,8 +1,6 @@
 //! Error types with HTTP status code mapping.
 
-use bytes::Bytes;
-use http_body_util::Full;
-use hyper::{Response, StatusCode};
+use hyper::StatusCode;
 
 /// Error type for runway operations.
 #[derive(Debug, thiserror::Error)]
@@ -90,7 +88,7 @@ impl Error {
     }
 
     /// Convert error into HTTP response.
-    pub fn into_response(self) -> Response<Full<Bytes>> {
+    pub fn into_response(self) -> crate::response::HttpResponse {
         let status = self.status_code();
         let message = if status.is_server_error() {
             tracing::error!("Internal error: {self}");
@@ -102,10 +100,12 @@ impl Error {
             "error": message
         });
 
-        Response::builder()
+        hyper::Response::builder()
             .status(status)
             .header("Content-Type", "application/json")
-            .body(Full::new(Bytes::from(body.to_string())))
+            .body(crate::response::Body::full(bytes::Bytes::from(
+                body.to_string(),
+            )))
             .unwrap()
     }
 }

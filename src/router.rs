@@ -287,7 +287,7 @@ impl Router {
                 Ok(hyper::Response::builder()
                     .status(hyper::StatusCode::OK)
                     .header("Content-Type", "application/json")
-                    .body(http_body_util::Full::new(Bytes::from(json)))
+                    .body(crate::response::Body::full(Bytes::from(json)))
                     .unwrap())
             }
         });

@@ -5,10 +5,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::{BodyExt, Limited};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
+
+use crate::response::{Body, HttpResponse};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use tokio::net::TcpListener;
@@ -59,7 +61,7 @@ impl Server {
 
 /// Add security and CORS headers to a response.
 fn add_standard_headers(
-    response: &mut Response<Full<Bytes>>,
+    response: &mut HttpResponse,
     origin: Option<&str>,
     server_config: &crate::config::Server,
 ) {
@@ -112,7 +114,7 @@ async fn handle_request(
     req: Request<Incoming>,
     state: Arc<State>,
     remote_addr: SocketAddr,
-) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
+) -> Result<HttpResponse, std::convert::Infallible> {
     let start = std::time::Instant::now();
     let (parts, body) = req.into_parts();
 
@@ -161,7 +163,7 @@ async fn handle_request(
         let mut response = Response::builder()
             .status(StatusCode::PAYLOAD_TOO_LARGE)
             .header("Content-Type", "application/json")
-            .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
+            .body(Body::full(Bytes::from(r#"{"error":"Payload too large"}"#)))
             .unwrap();
         add_standard_headers(&mut response, origin.as_deref(), state.config.server());
         response
@@ -177,7 +179,7 @@ async fn handle_request(
             let mut response = Response::builder()
                 .status(StatusCode::PAYLOAD_TOO_LARGE)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(r#"{"error":"Payload too large"}"#)))
+                .body(Body::full(Bytes::from(r#"{"error":"Payload too large"}"#)))
                 .unwrap();
             add_standard_headers(&mut response, origin.as_deref(), state.config.server());
             response
@@ -194,7 +196,7 @@ async fn handle_request(
     if method == hyper::Method::OPTIONS {
         let mut response = Response::builder()
             .status(StatusCode::NO_CONTENT)
-            .body(Full::new(Bytes::new()))
+            .body(Body::empty())
             .unwrap();
         add_standard_headers(&mut response, origin.as_deref(), state.config.server());
         response
@@ -255,12 +257,12 @@ async fn handle_request(
         RouteMatch::MethodNotAllowed => Response::builder()
             .status(StatusCode::METHOD_NOT_ALLOWED)
             .header("Content-Type", "application/json")
-            .body(Full::new(Bytes::from(r#"{"error":"Method not allowed"}"#)))
+            .body(Body::full(Bytes::from(r#"{"error":"Method not allowed"}"#)))
             .unwrap(),
         RouteMatch::NotFound => Response::builder()
             .status(StatusCode::NOT_FOUND)
             .header("Content-Type", "application/json")
-            .body(Full::new(Bytes::from(r#"{"error":"Not found"}"#)))
+            .body(Body::full(Bytes::from(r#"{"error":"Not found"}"#)))
             .unwrap(),
     };
 
@@ -370,7 +372,7 @@ pub async fn start(
                                         Response::builder()
                                             .status(StatusCode::SERVICE_UNAVAILABLE)
                                             .header("Content-Type", "application/json")
-                                            .body(Full::new(Bytes::from(
+                                            .body(Body::full(Bytes::from(
                                                 r#"{"error":"Service unavailable"}"#,
                                             )))
                                             .unwrap(),

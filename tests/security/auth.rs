@@ -42,7 +42,7 @@ fn rejects_none_algorithm_token() {
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let header = engine.encode(r#"{"alg":"none","typ":"JWT"}"#);
     let payload = engine.encode(
-        &serde_json::json!({"sub":"admin","exp":9999999999i64,"iat":1700000000}).to_string(),
+        serde_json::json!({"sub":"admin","exp":9999999999i64,"iat":1700000000}).to_string(),
     );
     let forged = format!("{header}.{payload}.");
 
