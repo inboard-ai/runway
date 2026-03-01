@@ -66,13 +66,19 @@ fn add_standard_headers(
     server_config: &crate::config::Server,
 ) {
     let headers = response.headers_mut();
-    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
-    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
-    headers.insert("Cache-Control", "no-store".parse().unwrap());
-    headers.insert(
-        "Content-Security-Policy",
-        "default-src 'none'".parse().unwrap(),
-    );
+    // Use entry() so handlers can override security defaults by setting headers first
+    headers
+        .entry("X-Content-Type-Options")
+        .or_insert("nosniff".parse().unwrap());
+    headers
+        .entry("X-Frame-Options")
+        .or_insert("DENY".parse().unwrap());
+    headers
+        .entry("Cache-Control")
+        .or_insert("no-store".parse().unwrap());
+    headers
+        .entry("Content-Security-Policy")
+        .or_insert("default-src 'none'".parse().unwrap());
 
     // HSTS
     if server_config.hsts {
