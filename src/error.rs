@@ -34,6 +34,12 @@ pub enum Error {
     #[error("Too many requests, retry after {retry_after}s")]
     TooManyRequests { retry_after: u64 },
 
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
+
+    #[error("Gateway timeout: {0}")]
+    GatewayTimeout(String),
+
     // Config errors
     #[error("Configuration error: {0}")]
     Config(String),
@@ -74,6 +80,8 @@ impl Error {
             Error::Conflict(_) => StatusCode::CONFLICT,
             Error::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Error::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
+            Error::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Error::GatewayTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
 
             // Config errors -> 500 (shouldn't happen at runtime)
             Error::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
