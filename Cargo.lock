@@ -287,6 +287,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "concourse-db"
+version = "0.1.0"
+source = "git+https://github.com/inboard-ai/concourse-db.git?branch=main#a2ee3b740132caf127060dc25738fc39fe718e8b"
+dependencies = [
+ "libsql",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1483,6 +1492,7 @@ dependencies = [
  "async-stream",
  "base64 0.22.1",
  "bytes",
+ "concourse-db",
  "futures-core",
  "http-body 1.0.1",
  "http-body-util",

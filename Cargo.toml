@@ -47,7 +47,8 @@ tracing = "0.1"
 # Error handling
 thiserror = "2"
 
-# Database (Turso/libSQL)
+# Database
+concourse-db = { git = "https://github.com/inboard-ai/concourse-db.git", branch = "main" }
 libsql = "0.6"
 
 [dev-dependencies]
