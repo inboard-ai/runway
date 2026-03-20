@@ -19,15 +19,24 @@ pub async fn connect(url: &str) -> crate::Result<Handle> {
         let token = std::env::var("TURSO_AUTH_TOKEN").map_err(|_| {
             crate::Error::Internal("TURSO_AUTH_TOKEN not set for remote database".into())
         })?;
-        Builder::new_remote(url.to_string(), token).build().await?
+        Builder::new_remote(url.to_string(), token)
+            .build()
+            .await
+            .map_err(concourse_db::Error::from)?
     } else if url == ":memory:" {
-        Builder::new_local(":memory:").build().await?
+        Builder::new_local(":memory:")
+            .build()
+            .await
+            .map_err(concourse_db::Error::from)?
     } else {
         let path = url
             .strip_prefix("sqlite://")
             .or_else(|| url.strip_prefix("file:"))
             .unwrap_or(url);
-        Builder::new_local(path).build().await?
+        Builder::new_local(path)
+            .build()
+            .await
+            .map_err(concourse_db::Error::from)?
     };
 
     Ok(Handle::new(db))

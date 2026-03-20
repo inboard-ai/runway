@@ -55,7 +55,7 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 
     #[error("Database error: {0}")]
-    Database(#[from] libsql::Error),
+    Database(#[from] concourse_db::Error),
 
     #[error("JWT error: {0}")]
     Jwt(#[from] jsonwebtoken::errors::Error),
