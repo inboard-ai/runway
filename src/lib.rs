@@ -67,7 +67,7 @@ pub use module::Module;
 pub use openapi::Info;
 pub use permission::{Level, level};
 pub use procedure::{Empty, Meta, Procedure};
-pub use router::{Context, Router};
+pub use router::{Context, Router, UpgradeContext};
 
 // Re-export commonly used dependencies for convenience
 pub use hyper::Method;

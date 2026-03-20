@@ -17,6 +17,10 @@ http-body = "1"
 http-body-util = "0.1"
 bytes = "1"
 
+# WebSocket upgrade support
+sha1 = "0.10"
+base64 = "0.22"
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 futures-core = "0.3"

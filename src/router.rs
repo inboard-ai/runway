@@ -128,6 +128,64 @@ impl Context {
 /// Takes a Context and returns a future resolving to a Response.
 pub type Handler = Box<dyn Fn(Context) -> BoxFuture<'static, Result<HttpResponse>> + Send + Sync>;
 
+/// Context for WebSocket upgrade handlers.
+///
+/// Similar to [`Context`] but without a pre-read body (the connection is being
+/// upgraded, not consumed as a normal request).
+pub struct UpgradeContext {
+    /// The request URI (includes path and query string).
+    pub uri: hyper::Uri,
+    /// The request headers.
+    pub headers: hyper::http::HeaderMap,
+    /// Route parameters (e.g., {id} from path).
+    pub params: HashMap<String, String>,
+    /// Database handle.
+    pub db: Option<crate::db::Handle>,
+    /// Server configuration.
+    pub config: Config,
+    /// Remote address of the connecting client.
+    pub remote_addr: std::net::SocketAddr,
+}
+
+impl UpgradeContext {
+    /// Get a header value by name.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.to_str().ok())
+    }
+
+    /// Get a route parameter by name.
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.params.get(name).map(|s| s.as_str())
+    }
+
+    /// Get a required route parameter, returning BadRequest if missing.
+    pub fn require_param(&self, name: &str) -> Result<&str> {
+        self.param(name)
+            .ok_or_else(|| crate::Error::BadRequest(format!("Missing parameter: {name}")))
+    }
+
+    /// Get the database handle if available.
+    pub fn db(&self) -> Option<&crate::db::Handle> {
+        self.db.as_ref()
+    }
+
+    /// Require database, returning Internal error if not configured.
+    pub fn require_db(&self) -> Result<&crate::db::Handle> {
+        self.db
+            .as_ref()
+            .ok_or_else(|| crate::Error::Internal("Database not configured".to_string()))
+    }
+}
+
+/// Handler for WebSocket upgrade routes.
+///
+/// Called after the HTTP 101 Switching Protocols response has been sent and the
+/// connection has been upgraded. Receives the upgrade context and the raw
+/// upgraded connection (wrap with `tokio_tungstenite::WebSocketStream` etc.).
+pub type UpgradeHandler = Arc<
+    dyn Fn(UpgradeContext, hyper::upgrade::Upgraded) -> BoxFuture<'static, ()> + Send + Sync,
+>;
+
 /// A registered route with method-specific handlers.
 struct RouteEntry {
     handlers: HashMap<Method, Handler>,
@@ -139,6 +197,8 @@ pub struct Router {
     entries: Vec<RouteEntry>,
     path_index: HashMap<String, usize>,
     pub(crate) operations: Vec<crate::operation::Meta>,
+    upgrade_routes: matchit::Router<usize>,
+    upgrade_entries: Vec<UpgradeHandler>,
 }
 
 impl Router {
@@ -149,6 +209,8 @@ impl Router {
             entries: Vec::new(),
             path_index: HashMap::new(),
             operations: Vec::new(),
+            upgrade_routes: matchit::Router::new(),
+            upgrade_entries: Vec::new(),
         }
     }
 
@@ -234,6 +296,39 @@ impl Router {
         self.route(Method::PATCH, path, handler);
     }
 
+    /// Register a WebSocket upgrade handler for a path.
+    ///
+    /// When a request with `Upgrade: websocket` matches this path, runway will
+    /// complete the HTTP upgrade handshake (101 Switching Protocols) and call
+    /// the handler with the upgraded connection.
+    ///
+    /// # Example
+    /// ```ignore
+    /// router.upgrade("/ws/{room}", |ctx, upgraded| async move {
+    ///     let ws = tokio_tungstenite::WebSocketStream::from_raw_socket(
+    ///         hyper_util::rt::TokioIo::new(upgraded),
+    ///         tungstenite::protocol::Role::Server,
+    ///         None,
+    ///     ).await;
+    ///     // handle websocket...
+    /// });
+    /// ```
+    pub fn upgrade<F, Fut>(&mut self, path: &str, handler: F)
+    where
+        F: Fn(UpgradeContext, hyper::upgrade::Upgraded) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let idx = self.upgrade_entries.len();
+        self.upgrade_entries
+            .push(Arc::new(move |ctx, upgraded| Box::pin(handler(ctx, upgraded))));
+        if let Err(e) = self.upgrade_routes.insert(path, idx) {
+            if cfg!(debug_assertions) {
+                panic!("conflicting upgrade route pattern \"{path}\": {e}");
+            }
+            tracing::error!("conflicting upgrade route pattern \"{path}\": {e} — skipping");
+        }
+    }
+
     /// Register a [`Procedure`] — wires up both the HTTP handler and OpenAPI
     /// metadata in one call.
     pub fn procedure<P: crate::procedure::Procedure>(&mut self) {
@@ -304,6 +399,8 @@ impl Default for Router {
 pub struct RouterHandle {
     routes: matchit::Router<usize>,
     entries: Vec<RouteEntry>,
+    upgrade_routes: matchit::Router<usize>,
+    upgrade_entries: Vec<UpgradeHandler>,
 }
 
 impl Router {
@@ -312,6 +409,8 @@ impl Router {
         Arc::new(RouterHandle {
             routes: self.routes,
             entries: self.entries,
+            upgrade_routes: self.upgrade_routes,
+            upgrade_entries: self.upgrade_entries,
         })
     }
 }
@@ -330,6 +429,25 @@ pub enum RouteMatch<'a> {
 }
 
 impl RouterHandle {
+    /// Match a WebSocket upgrade request to a registered upgrade route.
+    pub fn match_upgrade(
+        &self,
+        path: &str,
+    ) -> Option<(UpgradeHandler, HashMap<String, String>)> {
+        match self.upgrade_routes.at(path) {
+            Ok(matched) => {
+                let handler = Arc::clone(&self.upgrade_entries[*matched.value]);
+                let params = matched
+                    .params
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect();
+                Some((handler, params))
+            }
+            Err(_) => None,
+        }
+    }
+
     /// Match a request to a route.
     pub fn match_route(&self, method: &Method, path: &str) -> RouteMatch<'_> {
         match self.routes.at(path) {

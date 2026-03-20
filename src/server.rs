@@ -20,7 +20,7 @@ use tracing::{error, info, warn};
 
 use crate::config::Config;
 use crate::db;
-use crate::router::{Context, RouteMatch, RouterHandle};
+use crate::router::{Context, RouteMatch, RouterHandle, UpgradeContext};
 
 /// Maximum request body size in bytes (1 MB).
 const MAX_BODY_SIZE: usize = 1_048_576;
@@ -115,13 +115,99 @@ fn add_standard_headers(
     }
 }
 
+/// Check whether a request is a WebSocket upgrade.
+fn is_websocket_upgrade(req: &Request<Incoming>) -> bool {
+    req.headers()
+        .get("upgrade")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
+}
+
+/// Compute the Sec-WebSocket-Accept value from the client's key.
+fn websocket_accept_key(key: &str) -> String {
+    use base64::Engine;
+    use sha1::{Digest, Sha1};
+
+    let mut hasher = Sha1::new();
+    hasher.update(key.as_bytes());
+    hasher.update(b"258EAFA5-E914-47DA-95CA-5AB5DF11BE85");
+    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+}
+
 /// Handle an incoming HTTP request.
 async fn handle_request(
-    req: Request<Incoming>,
+    mut req: Request<Incoming>,
     state: Arc<State>,
     remote_addr: SocketAddr,
 ) -> Result<HttpResponse, std::convert::Infallible> {
     let start = std::time::Instant::now();
+
+    // --- WebSocket upgrade: intercept BEFORE consuming the body ---
+    if is_websocket_upgrade(&req) {
+        let path = req.uri().path().to_string();
+        if let Some((handler, params)) = state.router.match_upgrade(&path) {
+            let origin = req
+                .headers()
+                .get("origin")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            // Compute accept key from the client's Sec-WebSocket-Key header
+            let accept = req
+                .headers()
+                .get("Sec-WebSocket-Key")
+                .and_then(|v| v.to_str().ok())
+                .map(websocket_accept_key)
+                .unwrap_or_default();
+
+            // Get the upgrade future BEFORE the request is consumed
+            let on_upgrade = hyper::upgrade::on(&mut req);
+
+            // Build upgrade context from the request
+            let headers = req.headers().clone();
+            let uri = req.uri().clone();
+            let config = state.config.clone();
+            let db = state.db.clone();
+
+            let ctx = UpgradeContext {
+                uri,
+                headers,
+                params,
+                db,
+                config,
+                remote_addr,
+            };
+
+            // Spawn the handler — it runs after the 101 response is sent
+            tokio::spawn(async move {
+                match on_upgrade.await {
+                    Ok(upgraded) => handler(ctx, upgraded).await,
+                    Err(e) => error!("WebSocket upgrade failed: {e}"),
+                }
+            });
+
+            // Return 101 Switching Protocols
+            let mut response = Response::builder()
+                .status(StatusCode::SWITCHING_PROTOCOLS)
+                .header("Upgrade", "websocket")
+                .header("Connection", "Upgrade")
+                .header("Sec-WebSocket-Accept", accept)
+                .body(Body::empty())
+                .unwrap();
+            add_standard_headers(&mut response, origin.as_deref(), state.config.server());
+
+            info!(
+                method = "GET",
+                path = %path,
+                status = 101u16,
+                latency_ms = start.elapsed().as_secs_f64() * 1000.0,
+                remote_addr = %remote_addr,
+                "websocket upgrade"
+            );
+            return Ok(response);
+        }
+    }
+
     let (parts, body) = req.into_parts();
 
     // Generate or propagate request ID
@@ -363,7 +449,7 @@ pub async fn start(
                                     .timer(TokioTimer::new())
                                     .header_read_timeout(HEADER_READ_TIMEOUT);
 
-                                if let Err(e) = builder.serve_connection(io, service).await {
+                                if let Err(e) = builder.serve_connection_with_upgrades(io, service).await {
                                     error!("Error serving connection from {}: {}", remote_addr, e);
                                 }
 
@@ -390,7 +476,7 @@ pub async fn start(
                                     .timer(TokioTimer::new())
                                     .header_read_timeout(HEADER_READ_TIMEOUT);
 
-                                let _ = builder.serve_connection(io, service).await;
+                                let _ = builder.serve_connection_with_upgrades(io, service).await;
                             });
                         }
                     }
