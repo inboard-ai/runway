@@ -20,7 +20,8 @@ use tracing::{error, info, warn};
 
 use crate::config::Config;
 use crate::db;
-use crate::router::{Context, RouteMatch, RouterHandle, UpgradeContext};
+use crate::router::{Context, Handle, RouteMatch};
+use crate::upgrade;
 
 /// Maximum request body size in bytes (1 MB).
 const MAX_BODY_SIZE: usize = 1_048_576;
@@ -35,7 +36,7 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(2);
 pub struct State {
     pub config: Config,
     pub db: Option<db::Handle>,
-    pub router: Arc<RouterHandle>,
+    pub router: Arc<Handle>,
     pub rate_limiter: Option<Arc<crate::rate_limit::RateLimiter>>,
 }
 
@@ -169,7 +170,7 @@ async fn handle_request(
             let config = state.config.clone();
             let db = state.db.clone();
 
-            let ctx = UpgradeContext {
+            let ctx = upgrade::Context {
                 uri,
                 headers,
                 params,
@@ -382,7 +383,7 @@ async fn handle_request(
 pub async fn start(
     config: Config,
     db: Option<db::Handle>,
-    router: Arc<RouterHandle>,
+    router: Arc<Handle>,
 ) -> crate::Result<Server> {
     let addr: SocketAddr = format!("{}:{}", config.host(), config.port()).parse()?;
     let listener = TcpListener::bind(addr).await?;
@@ -530,7 +531,7 @@ pub async fn start(
 pub async fn run(
     config: Config,
     db: Option<db::Handle>,
-    router: Arc<RouterHandle>,
+    router: Arc<Handle>,
 ) -> crate::Result<()> {
     let server = start(config, db, router).await?;
 

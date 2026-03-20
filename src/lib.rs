@@ -58,6 +58,7 @@ pub mod rate_limit;
 pub mod response;
 pub mod router;
 pub mod server;
+pub mod upgrade;
 
 // Re-export main types at crate root
 pub use config::{Config, Loader};
@@ -67,7 +68,7 @@ pub use module::Module;
 pub use openapi::Info;
 pub use permission::{Level, level};
 pub use procedure::{Empty, Meta, Procedure};
-pub use router::{Context, Router, UpgradeContext};
+pub use router::{Context, Router};
 
 // Re-export commonly used dependencies for convenience
 pub use hyper::Method;
