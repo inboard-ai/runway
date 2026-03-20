@@ -261,8 +261,9 @@ impl Router {
         Fut: Future<Output = ()> + Send + 'static,
     {
         let idx = self.upgrade_entries.len();
-        self.upgrade_entries
-            .push(Arc::new(move |ctx, upgraded| Box::pin(handler(ctx, upgraded))));
+        self.upgrade_entries.push(Arc::new(move |ctx, upgraded| {
+            Box::pin(handler(ctx, upgraded))
+        }));
         if let Err(e) = self.upgrade_routes.insert(path, idx) {
             if cfg!(debug_assertions) {
                 panic!("conflicting upgrade route pattern \"{path}\": {e}");

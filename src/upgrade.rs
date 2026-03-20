@@ -64,6 +64,5 @@ impl Context {
 /// Called after the HTTP 101 Switching Protocols response has been sent and the
 /// connection has been upgraded. Receives the upgrade context and the raw
 /// upgraded connection (wrap with `tokio_tungstenite::WebSocketStream` etc.).
-pub type Handler = Arc<
-    dyn Fn(Context, hyper::upgrade::Upgraded) -> BoxFuture<'static, ()> + Send + Sync,
->;
+pub type Handler =
+    Arc<dyn Fn(Context, hyper::upgrade::Upgraded) -> BoxFuture<'static, ()> + Send + Sync>;

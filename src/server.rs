@@ -528,11 +528,7 @@ pub async fn start(
 /// * `config` - Server configuration
 /// * `db` - Optional database connection (wrapped in Arc for sharing)
 /// * `router` - Router handle with registered routes
-pub async fn run(
-    config: Config,
-    db: Option<db::Handle>,
-    router: Arc<Handle>,
-) -> crate::Result<()> {
+pub async fn run(config: Config, db: Option<db::Handle>, router: Arc<Handle>) -> crate::Result<()> {
     let server = start(config, db, router).await?;
 
     // Wait for ctrl_c as default shutdown trigger
