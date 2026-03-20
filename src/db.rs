@@ -30,6 +30,18 @@ impl std::ops::Deref for Handle {
     }
 }
 
+impl From<Handle> for Arc<Database> {
+    fn from(h: Handle) -> Self {
+        h.0
+    }
+}
+
+impl From<Arc<Database>> for Handle {
+    fn from(db: Arc<Database>) -> Self {
+        Handle(db)
+    }
+}
+
 impl std::fmt::Debug for Handle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Handle").field(&"Database(...)").finish()
