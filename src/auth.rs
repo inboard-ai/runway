@@ -174,6 +174,26 @@ pub fn verify_token(config: &config::Auth, token: &str) -> Result<Claims> {
     Ok(token_data.claims)
 }
 
+/// Check if a token is past half its lifetime and should be refreshed.
+pub fn should_refresh(claims: &Claims) -> bool {
+    let now = jiff::Timestamp::now().as_second();
+    let lifetime = claims.exp - claims.iat;
+    let elapsed = now - claims.iat;
+    lifetime > 0 && elapsed > lifetime / 2
+}
+
+/// Extract the bearer token string from an Authorization header.
+pub fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|v| {
+            v.get(..7)
+                .filter(|p| p.eq_ignore_ascii_case("bearer "))
+                .map(|_| &v[7..])
+        })
+}
+
 /// Extract user ID from the Authorization header.
 ///
 /// Expects a Bearer token in the format: `Authorization: Bearer <token>`
@@ -182,19 +202,8 @@ pub fn verify_token(config: &config::Auth, token: &str) -> Result<Claims> {
 /// - `Ok(user_id)` if the token is valid
 /// - `Err(Error::Unauthorized)` if the header is missing or token is invalid
 pub fn extract_user_id(headers: &HeaderMap, config: &config::Auth) -> Result<String> {
-    let auth_header = headers
-        .get("Authorization")
-        .and_then(|h| h.to_str().ok())
-        .ok_or(Error::Unauthorized)?;
-
-    let token = auth_header
-        .get(..7)
-        .filter(|p| p.eq_ignore_ascii_case("bearer "))
-        .map(|_| &auth_header[7..])
-        .ok_or(Error::Unauthorized)?;
-
+    let token = extract_bearer_token(headers).ok_or(Error::Unauthorized)?;
     let claims = verify_token(config, token)?;
-
     Ok(claims.sub)
 }
 

@@ -282,6 +282,9 @@ async fn handle_request(
         }
     };
 
+    // Extract bearer token before headers are moved into Context
+    let bearer_token = crate::auth::extract_bearer_token(&parts.headers).map(str::to_string);
+
     let method = parts.method.clone();
     let path = parts.uri.path().to_string();
 
@@ -358,6 +361,18 @@ async fn handle_request(
             .body(Body::full(Bytes::from(r#"{"error":"Not found"}"#)))
             .unwrap(),
     };
+
+    // Sliding window token refresh: if the token is past half its lifetime,
+    // issue a fresh one so active sessions don't expire.
+    if let Some(ref token) = bearer_token
+        && let Ok(claims) = crate::auth::verify_token(state.config.auth(), token)
+        && crate::auth::should_refresh(&claims)
+        && let Ok(fresh) = crate::auth::create_token(state.config.auth(), &claims.sub)
+    {
+        response
+            .headers_mut()
+            .insert("x-refresh-token", fresh.parse().unwrap());
+    }
 
     add_standard_headers(&mut response, origin.as_deref(), state.config.server());
     response

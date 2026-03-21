@@ -218,7 +218,7 @@ fn default_rate_limit_window() -> u64 {
 }
 
 fn default_token_expiry_days() -> u32 {
-    1
+    7
 }
 
 /// Builder for loading configuration with customizable options.
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn test_default_auth_config() {
         let auth = Auth::default();
-        assert_eq!(auth.token_expiry_days, 1);
+        assert_eq!(auth.token_expiry_days, 7);
         assert!(auth.jwt_secret.is_empty());
         assert!(auth.jwt_issuer.is_none());
         assert!(auth.jwt_audience.is_none());
